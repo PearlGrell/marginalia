@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="page_background">#F7F3EC</color>
+    <!-- The Continue reading widget: paper by day, charcoal at night. -->
+    <color name="widget_background">#F7F3EC</color>
+    <color name="widget_ink">#1C1A17</color>
+    <color name="widget_muted">#6B645A</color>
+    <color name="widget_accent">#7A2E2E</color>
+    <color name="widget_track">#E2DACC</color>
+</resources>

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Marginalia: an open book, a reader's mark in its margin, a ribbon keeping the place. -->
+  <rect width="512" height="512" rx="112" fill="#1C1A17"/>
+  <!-- ribbon, from the spine -->
+  <path d="M264 340 H296 V436 L280 421 L264 436 Z" fill="#A23B34"/>
+  <!-- the edges of the pages beneath -->
+  <path d="M256 172 C214 144 158 136 96 146 V374 C158 364 214 370 256 398 C298 370 354 364 416 374 V146 C354 136 298 144 256 172 Z" fill="#CFC5B4"/>
+  <!-- left and right pages -->
+  <path d="M256 158 C214 130 158 122 96 132 V362 C158 352 214 358 256 386 Z" fill="#F7F3EC"/>
+  <path d="M256 158 C298 130 354 122 416 132 V362 C354 352 298 358 256 386 Z" fill="#EEE7DA"/>
+  <!-- a highlighted line -->
+  <path d="M282 221 Q318 209 362 212" fill="none" stroke="#A23B34" stroke-opacity="0.26" stroke-width="22" stroke-linecap="round"/>
+  <!-- text, following the curve of the pages -->
+  <g fill="none" stroke="#1C1A17" stroke-opacity="0.62" stroke-width="8" stroke-linecap="round">
+    <path d="M150 180 Q194 177 230 189"/>
+    <path d="M150 212 Q194 209 230 221"/>
+    <path d="M150 244 Q194 241 230 253"/>
+    <path d="M150 276 Q194 273 230 285"/>
+    <path d="M150 308 Q180 306 204 313"/>
+    <path d="M282 189 Q318 177 362 180"/>
+    <path d="M282 221 Q318 209 362 212"/>
+    <path d="M282 253 Q318 241 362 244"/>
+    <path d="M282 285 Q318 273 362 276"/>
+    <path d="M282 317 Q306 309 330 308"/>
+  </g>
+  <!-- the reader's marks: a line beside a passage, an asterisk -->
+  <g fill="none" stroke="#A23B34" stroke-linecap="round">
+    <path d="M126 206 Q122 238 127 292" stroke-width="7"/>
+    <path d="M124 172 v16 M116 176 l16 8 M132 176 l-16 8" stroke-width="5"/>
+  </g>
+</svg>

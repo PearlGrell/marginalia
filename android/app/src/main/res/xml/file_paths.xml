@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files other apps may read when shared: story cards, and saved ones on Android 9 and older. -->
+<paths>
+    <cache-path name="share" path="share/"/>
+    <external-files-path name="pictures" path="Pictures/"/>
+</paths>
