@@ -54,6 +54,7 @@ import org.readium.r2.shared.util.AbsoluteUrl
  * - `search {query}` → `[{locator, title, before, match, after, progression}]`;
  *   `markSearchResult {locator?, color}` underlines the one being looked at
  * - `insertTranslation {id, text}` puts a translation after a marked paragraph
+ * - `locatorAt {x, y}` → the locator of the paragraph at a tap, or null
  * - `snapshot {scale?}` → `{width, height, pixels}` with RGBA8888 pixels of the visible page,
  *   which the page curl animates.
  *
@@ -267,6 +268,28 @@ class ReaderPlatformView(
                     result.success(null)
                 }
             }
+            "locatorAt" -> {
+                // The paragraph under a tap (fractions of the view), as a locator listening
+                // can start from: the page's locator, narrowed to that element.
+                val x = call.argument<Double>("x") ?: return result.success(null)
+                val y = call.argument<Double>("y") ?: return result.success(null)
+                scope.launch {
+                    val found = navigator.evaluateJavascript(
+                        LINE_AT_SCRIPT.replace("%X%", x.toString()).replace("%Y%", y.toString()),
+                    )?.let { raw ->
+                        runCatching { JSONObject(JSONObject("{\"v\":$raw}").getString("v")) }.getOrNull()
+                    }
+                    if (found == null) return@launch result.success(null)
+                    val page = navigator.currentLocator.value
+                    val locator = page.copy(
+                        locations = page.locations.copy(
+                            otherLocations = page.locations.otherLocations + ("cssSelector" to found.getString("selector")),
+                        ),
+                        text = Locator.Text(highlight = found.optString("text")),
+                    )
+                    result.success(locator.toJSON().toString())
+                }
+            }
             "insertTranslation" -> {
                 val id = call.argument<String>("id")
                 val translation = call.argument<String>("text")
@@ -418,6 +441,25 @@ class ReaderPlatformView(
             })();
         """.trimIndent()
         private const val SETTLE_TIMEOUT_MS = 1500L
+
+        /** The block of text at (%X%, %Y%), fractions of the page: {selector, text}, or null. */
+        private val LINE_AT_SCRIPT = """
+            (function () {
+              var el = document.elementFromPoint(window.innerWidth * %X%, window.innerHeight * %Y%);
+              if (!el) return null;
+              var block = el.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, dd, dt, figcaption, td, pre');
+              if (!block) block = el;
+              var text = (block.innerText || '').trim();
+              if (!text || block === document.body || block === document.documentElement) return null;
+              var parts = [];
+              for (var n = block; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
+                var i = 1;
+                for (var s = n.previousElementSibling; s; s = s.previousElementSibling) i++;
+                parts.unshift(n.tagName.toLowerCase() + ':nth-child(' + i + ')');
+              }
+              return JSON.stringify({ selector: 'body > ' + parts.join(' > '), text: text.substring(0, 200) });
+            })();
+        """.trimIndent()
     }
 }
 

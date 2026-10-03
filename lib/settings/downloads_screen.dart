@@ -2,7 +2,6 @@ import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 
 import '../dictionary/dictionary_pack.dart';
 import '../dictionary/foreign_dictionary.dart';
@@ -10,7 +9,6 @@ import '../theme/tokens.dart';
 import '../translate/translate_sheet.dart' show pickTranslateLanguage;
 import '../translate/translation.dart';
 import '../listen/kokoro.dart';
-import 'voices.dart';
 
 /// Everything the app downloads for offline use: the dictionary, translation languages and
 /// reading voices. This is the one place to add or remove them.
@@ -276,19 +274,20 @@ class _TranslationSection extends ConsumerWidget {
 
 final _voiceLanguageProvider = NotifierProvider<_VoiceLanguage, String>(_VoiceLanguage.new);
 
+/// Which language's voices are listed: the phone's, if Kokoro speaks it.
 class _VoiceLanguage extends Notifier<String> {
   @override
   String build() {
-    final device = PlatformDispatcher.instance.locale.languageCode;
-    return sampleLines.containsKey(device) ? device : 'en';
+    final locale = PlatformDispatcher.instance.locale;
+    if (locale.languageCode == 'en') return locale.countryCode == 'GB' ? 'en-GB' : 'en-US';
+    return kokoroLanguages.map((l) => l.$1).firstWhere(
+      (code) => code.split('-').first == locale.languageCode,
+      orElse: () => 'en-US',
+    );
   }
 
   void set(String language) => state = language;
 }
-
-final _phoneVoicesProvider = FutureProvider.family<List<PhoneVoice>, String>(
-  (ref, language) => ref.watch(voicesProvider).forLanguage(language),
-);
 
 class _VoicesSection extends ConsumerStatefulWidget {
   const _VoicesSection();
@@ -298,128 +297,95 @@ class _VoicesSection extends ConsumerStatefulWidget {
 }
 
 class _VoicesSectionState extends ConsumerState<_VoicesSection> {
-  /// The phone voice or Kokoro voice whose sample is playing.
-  String? _playing;
+  /// The voice whose sample is playing or being made.
+  int? _playing;
+  late final KokoroPack _kokoro = ref.read(kokoroProvider.notifier);
 
   @override
   void dispose() {
-    ref.read(voicesProvider).stop();
+    if (_playing != null) _kokoro.stop();
     super.dispose();
   }
 
-  Future<void> _sampleNatural(KokoroVoice voice, String language) async {
-    final key = 'k${voice.speaker}';
-    final kokoro = ref.read(kokoroProvider.notifier);
-    if (_playing == key) {
-      await kokoro.stop();
+  Future<void> _sample(KokoroVoice voice) async {
+    if (_playing == voice.speaker) {
       setState(() => _playing = null);
+      await _kokoro.stop();
       return;
     }
-    setState(() => _playing = key);
+    setState(() => _playing = voice.speaker);
     try {
-      await kokoro.sample(voice, sampleLines[voice.baseLanguage] ?? sampleLines['en']!);
-    } catch (_) {
-      // Stopped, or the model couldn't load: the button resets either way.
+      await _kokoro.sample(voice, sampleLines[voice.baseLanguage] ?? sampleLines['en']!);
+    } catch (e) {
+      if (mounted && _playing == voice.speaker) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Couldn't play ${voice.name}: $e")));
+      }
     }
-    if (mounted && _playing == key) setState(() => _playing = null);
+    if (mounted && _playing == voice.speaker) setState(() => _playing = null);
   }
 
   @override
   Widget build(BuildContext context) {
     final language = ref.watch(_voiceLanguageProvider);
-    final text = Theme.of(context).textTheme;
-    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
-    final languageName = TranslateLanguageName.fromCode(language)?.label ?? language;
     final kokoro = ref.watch(kokoroProvider);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'Listen reads with natural Kokoro voices, which run on your phone with no connection. '
-          'Until they are downloaded, or for a language they don’t speak, it uses your phone’s own voices.',
-          style: text.bodySmall?.copyWith(color: muted),
-        ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Language'),
-          trailing: Text(languageName, style: text.titleSmall),
-          onTap: () async {
-            final picked = await pickTranslateLanguage(
-              context,
-              selected: TranslateLanguageName.fromCode(language),
-            );
-            if (picked != null) ref.read(_voiceLanguageProvider.notifier).set(picked.bcpCode);
-          },
-        ),
-        _naturalVoices(context, language, languageName, kokoro),
-        const SizedBox(height: Space.sm),
-        Theme(
-          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            childrenPadding: EdgeInsets.zero,
-            initiallyExpanded: !kokoro.installed,
-            title: const Text('Phone voices'),
-            subtitle: Text(
-              kokoro.installed ? 'Used for languages the natural voices don’t speak' : 'Used until natural voices are downloaded',
-              style: text.bodySmall,
-            ),
-            children: [_phoneVoices(context, language, languageName)],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _naturalVoices(BuildContext context, String language, String languageName, KokoroState kokoro) {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
-    final notifier = ref.read(kokoroProvider.notifier);
     final listen = ref.read(listenVoicesProvider);
+    final languageName = kokoroLanguages.firstWhere((l) => l.$1 == language, orElse: () => kokoroLanguages.first).$2;
 
     final Widget body = switch (kokoro.status) {
       KokoroStatus.installed => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SwitchListTile(
+          ListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Use natural voices'),
-            value: listen.preferNatural,
-            onChanged: (on) async {
-              await listen.setPreferNatural(on);
-              setState(() {});
+            title: const Text('Language'),
+            trailing: Text(languageName, style: text.titleSmall),
+            onTap: () async {
+              final picked = await showModalBottomSheet<String>(
+                context: context,
+                builder: (context) => SafeArea(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final (code, name) in kokoroLanguages)
+                        ListTile(
+                          title: Text(name),
+                          trailing: code == language ? const Icon(Icons.check) : null,
+                          onTap: () => Navigator.pop(context, code),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+              if (picked != null) ref.read(_voiceLanguageProvider.notifier).set(picked);
             },
           ),
-          if (!KokoroVoice.speaks(language))
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: Space.sm),
-              child: Text(
-                'The natural voices don’t speak $languageName; books in it use the phone voices below.',
-                style: text.bodyMedium,
+          for (final voice in KokoroVoice.forLanguage(language))
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: IconButton(
+                tooltip: _playing == voice.speaker ? 'Stop' : 'Play a sample',
+                icon: Icon(_playing == voice.speaker ? Icons.stop_circle_outlined : Icons.play_circle_outline),
+                onPressed: () => _sample(voice),
               ),
-            )
-          else
-            for (final voice in KokoroVoice.forLanguage(language))
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: IconButton(
-                  tooltip: 'Play a sample',
-                  icon: Icon(_playing == 'k${voice.speaker}' ? Icons.stop_circle_outlined : Icons.play_circle_outline),
-                  onPressed: () => _sampleNatural(voice, language),
-                ),
-                title: Text(voice.name),
-                subtitle: Text('${voice.accent} ${voice.gender}${voice.featured ? ' · one of the best' : ''}'),
-                trailing: listen.kokoroFor(language).speaker == voice.speaker
-                    ? Icon(Icons.check, color: scheme.primary)
-                    : TextButton(
-                        onPressed: () async {
-                          await listen.setKokoro(voice);
-                          setState(() {});
-                        },
-                        child: const Text('Use'),
-                      ),
-              ),
+              title: Text(voice.name),
+              subtitle: Text('${voice.accent} ${voice.gender}${voice.featured ? ' · one of the best' : ''}'),
+              trailing: listen.kokoroFor(voice.language).speaker == voice.speaker
+                  ? Icon(Icons.check, color: scheme.primary)
+                  : TextButton(
+                      onPressed: () async {
+                        await listen.setKokoro(voice);
+                        setState(() {});
+                      },
+                      child: const Text('Use'),
+                    ),
+            ),
+          const SizedBox(height: Space.xs),
+          Text(
+            'The first sample in a language takes a few seconds while the voices load.',
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
@@ -427,17 +393,19 @@ class _VoicesSectionState extends ConsumerState<_VoicesSection> {
                 final ok = await showDialog<bool>(
                   context: context,
                   builder: (context) => AlertDialog(
-                    title: const Text('Remove natural voices?'),
-                    content: const Text('This frees ${KokoroPack.installedSizeLabel}. Listen goes back to your phone’s voices.'),
+                    title: const Text('Remove the voices?'),
+                    content: const Text(
+                      'This frees ${KokoroPack.installedSizeLabel}. Listen won’t work until you download them again.',
+                    ),
                     actions: [
                       TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
                       TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
                     ],
                   ),
                 );
-                if (ok == true) await notifier.remove();
+                if (ok == true) await _kokoro.remove();
               },
-              child: const Text('Remove natural voices'),
+              child: const Text('Remove voices'),
             ),
           ),
         ],
@@ -458,7 +426,7 @@ class _VoicesSectionState extends ConsumerState<_VoicesSection> {
                 ),
               ),
               if (kokoro.status == KokoroStatus.downloading)
-                TextButton(onPressed: notifier.cancel, child: const Text('Cancel')),
+                TextButton(onPressed: _kokoro.cancel, child: const Text('Cancel')),
             ],
           ),
         ],
@@ -468,13 +436,14 @@ class _VoicesSectionState extends ConsumerState<_VoicesSection> {
         children: [
           FilledButton.icon(
             icon: const Icon(Icons.download_outlined),
-            label: const Text('Download natural voices (${KokoroPack.downloadSizeLabel})'),
-            onPressed: notifier.install,
+            label: const Text('Download voices (${KokoroPack.downloadSizeLabel})'),
+            onPressed: _kokoro.install,
           ),
           const SizedBox(height: Space.xs),
           Text(
-            '54 voices for English (American and British), Spanish, French, Hindi, Italian, '
-            'Japanese, Brazilian Portuguese and Chinese. Takes ${KokoroPack.installedSizeLabel} once unpacked; Wi-Fi recommended.',
+            '54 natural voices for English (American and British), Spanish, French, Hindi, Italian, '
+            'Japanese, Brazilian Portuguese and Chinese. They run on your phone, with no '
+            'connection. Takes ${KokoroPack.installedSizeLabel} once unpacked; Wi-Fi recommended.',
             style: text.bodySmall,
           ),
           if (kokoro.error case final error?)
@@ -486,110 +455,15 @@ class _VoicesSectionState extends ConsumerState<_VoicesSection> {
       ),
     };
 
-    return Container(
-      padding: const EdgeInsets.all(Space.md),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(Radii.lg),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.record_voice_over_outlined, size: 20, color: scheme.primary),
-              const SizedBox(width: Space.sm),
-              Text('Natural voices', style: text.titleMedium),
-              const SizedBox(width: Space.sm),
-              Text('Kokoro', style: text.labelSmall?.copyWith(color: scheme.onSurfaceVariant)),
-            ],
-          ),
-          const SizedBox(height: Space.sm),
-          body,
-        ],
-      ),
-    );
-  }
-
-  Widget _phoneVoices(BuildContext context, String language, String languageName) {
-    final voices = ref.watch(_phoneVoicesProvider(language));
-    final store = ref.read(voicesProvider);
-    final chosen = store.defaultFor(language)?.id;
-    final text = Theme.of(context).textTheme;
-    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        switch (voices) {
-          AsyncData(value: final list) when list.isEmpty => Padding(
-            padding: const EdgeInsets.symmetric(vertical: Space.sm),
-            child: Text('No $languageName voices on this phone yet.', style: text.bodyMedium),
-          ),
-          AsyncData(value: final list) => Column(
-            children: [
-              for (final (i, voice) in list.indexed)
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: IconButton(
-                    tooltip: 'Play a sample',
-                    icon: Icon(_playing == voice.id ? Icons.stop_circle_outlined : Icons.play_circle_outline),
-                    onPressed: !voice.installed
-                        ? null
-                        : () async {
-                            if (_playing == voice.id) {
-                              await store.stop();
-                              setState(() => _playing = null);
-                            } else {
-                              setState(() => _playing = voice.id);
-                              await store.sample(voice);
-                            }
-                          },
-                  ),
-                  title: Text(voice.name.isEmpty ? 'Voice ${i + 1}' : 'Voice ${i + 1} · ${voice.name}'),
-                  subtitle: Text(
-                    [
-                      '${voice.quality} quality',
-                      voice.network ? 'needs a connection' : 'offline',
-                      if (!voice.installed) 'not downloaded',
-                    ].join(' · '),
-                  ),
-                  trailing: voice.id == chosen
-                      ? Icon(Icons.check, color: Theme.of(context).colorScheme.primary)
-                      : TextButton(
-                          onPressed: !voice.installed
-                              ? null
-                              : () async {
-                                  await store.setDefault(voice);
-                                  setState(() {});
-                                },
-                          child: const Text('Use'),
-                        ),
-                ),
-            ],
-          ),
-          AsyncError() => Text("Couldn't list voices.", style: text.bodyMedium),
-          _ => const Padding(
-            padding: EdgeInsets.all(Space.md),
-            child: Center(child: CircularProgressIndicator()),
-          ),
-        },
-        const SizedBox(height: Space.sm),
-        OutlinedButton.icon(
-          icon: const Icon(Icons.download_outlined),
-          label: const Text('Get more phone voices'),
-          onPressed: () async {
-            await store.installMore();
-            // Back from the engine's screen: list again.
-            ref.invalidate(_phoneVoicesProvider(language));
-          },
-        ),
-        const SizedBox(height: Space.xs),
         Text(
-          'Opens your speech engine (usually Speech Services by Google), where voices for '
-          'each language can be downloaded.',
-          style: text.bodySmall?.copyWith(color: muted),
+          'Listen reads with Kokoro, natural-sounding voices that run on your phone.',
+          style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
+        const SizedBox(height: Space.sm),
+        body,
       ],
     );
   }

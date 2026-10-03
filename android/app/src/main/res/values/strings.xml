@@ -3,4 +3,5 @@
     <string name="widget_description">The book you\'re reading, one tap away</string>
     <string name="widget_label">Continue reading</string>
     <string name="widget_empty">Open a book in Marginalia and it appears here</string>
+    <string name="widget_resume">Read</string>
 </resources>

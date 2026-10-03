@@ -14,6 +14,7 @@ abstract final class AppTheme {
     muted: Palette.inkMuted,
     hairline: Palette.hairline,
     accent: Palette.oxblood,
+    fill: Palette.oxblood,
   );
 
   static ThemeData dark() => _build(
@@ -25,6 +26,7 @@ abstract final class AppTheme {
     muted: Palette.chalkMuted,
     hairline: Palette.hairlineDark,
     accent: Palette.oxbloodLight,
+    fill: Palette.maroonFill,
   );
 
   static ThemeData _build({
@@ -35,26 +37,32 @@ abstract final class AppTheme {
     required Color onSurface,
     required Color muted,
     required Color hairline,
+    // Maroon for text and icons.
     required Color accent,
+    // Maroon for filled things (buttons, FAB, selected chips), with [onFill] on it.
+    required Color fill,
   }) {
-    final onAccent = brightness == Brightness.light ? Palette.paper : Palette.charcoal;
+    const onFill = Palette.onMaroon;
+    final light = brightness == Brightness.light;
+    // A soft maroon wash, for selected-but-quiet things (the tab indicator, tonal buttons).
+    final wash = Color.alphaBlend(fill.withValues(alpha: light ? 0.12 : 0.32), surface);
     final scheme = ColorScheme(
       brightness: brightness,
-      primary: accent,
-      onPrimary: onAccent,
-      primaryContainer: Color.alphaBlend(accent.withValues(alpha: 0.12), surface),
-      onPrimaryContainer: onSurface,
+      primary: light ? fill : accent,
+      onPrimary: light ? onFill : Palette.charcoal,
+      primaryContainer: wash,
+      onPrimaryContainer: light ? fill : accent,
       secondary: onSurface,
       onSecondary: surface,
-      tertiary: accent,
-      onTertiary: onAccent,
+      tertiary: light ? fill : accent,
+      onTertiary: light ? onFill : Palette.charcoal,
       error: const Color(0xFFB3261E),
       onError: Colors.white,
       surface: surface,
       onSurface: onSurface,
       onSurfaceVariant: muted,
-      secondaryContainer: Color.alphaBlend(onSurface.withValues(alpha: 0.08), surface),
-      onSecondaryContainer: onSurface,
+      secondaryContainer: wash,
+      onSecondaryContainer: light ? fill : accent,
       surfaceContainerLowest: sunken,
       surfaceContainerLow: surface,
       surfaceContainer: raised,
@@ -103,8 +111,8 @@ abstract final class AppTheme {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          backgroundColor: onSurface,
-          foregroundColor: surface,
+          backgroundColor: fill,
+          foregroundColor: onFill,
           textStyle: text.labelLarge,
           padding: const EdgeInsets.symmetric(horizontal: Space.xl, vertical: Space.md),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.md)),
@@ -128,45 +136,47 @@ abstract final class AppTheme {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         height: 64,
-        indicatorColor: onSurface.withValues(alpha: 0.08),
+        indicatorColor: wash,
         iconTheme: WidgetStateProperty.resolveWith(
           (states) => IconThemeData(
-            color: states.contains(WidgetState.selected) ? onSurface : muted,
+            color: states.contains(WidgetState.selected) ? (light ? fill : accent) : muted,
             size: 22,
           ),
         ),
         labelTextStyle: WidgetStateTextStyle.resolveWith(
           (states) => text.labelMedium!.copyWith(
-            color: states.contains(WidgetState.selected) ? onSurface : muted,
+            color: states.contains(WidgetState.selected) ? (light ? fill : accent) : muted,
+            fontWeight: states.contains(WidgetState.selected) ? FontWeight.w600 : null,
           ),
         ),
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
-        backgroundColor: onSurface,
-        foregroundColor: surface,
+        backgroundColor: fill,
+        foregroundColor: onFill,
         elevation: 2,
         highlightElevation: 4,
         extendedTextStyle: text.labelLarge,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.lg)),
       ),
       chipTheme: ChipThemeData(
-        // Quiet: a faint ink wash and a firm outline when selected, a hairline otherwise.
+        // Selected: solid maroon. Otherwise: a hairline outline on the page.
+        // Unselected chips get a light fill and a firm outline, so they read as buttons.
         color: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected)
-              ? onSurface.withValues(alpha: 0.08)
-              : Colors.transparent,
+          (states) => states.contains(WidgetState.selected) ? fill : sunken,
         ),
         labelStyle: WidgetStateTextStyle.resolveWith(
           (states) => states.contains(WidgetState.selected)
-              ? text.labelMedium!.copyWith(color: onSurface, fontWeight: FontWeight.w600)
-              : text.labelMedium!.copyWith(color: muted),
+              ? text.labelMedium!.copyWith(color: onFill, fontWeight: FontWeight.w600)
+              : text.labelMedium!.copyWith(color: onSurface),
         ),
         side: WidgetStateBorderSide.resolveWith(
           (states) => BorderSide(
-            color: states.contains(WidgetState.selected) ? onSurface : hairline,
+            color: states.contains(WidgetState.selected) ? fill : onSurface.withValues(alpha: light ? 0.28 : 0.32),
           ),
         ),
-        iconTheme: IconThemeData(color: muted, size: 16),
+        iconTheme: IconThemeData(color: light ? fill : accent, size: 16),
+        checkmarkColor: onFill,
+        deleteIconColor: muted,
         showCheckmark: false,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.md)),
@@ -178,10 +188,10 @@ abstract final class AppTheme {
         subtitleTextStyle: text.bodySmall,
       ),
       sliderTheme: SliderThemeData(
-        activeTrackColor: onSurface,
+        activeTrackColor: light ? fill : accent,
         inactiveTrackColor: hairline,
-        thumbColor: onSurface,
-        overlayColor: onSurface.withValues(alpha: 0.08),
+        thumbColor: light ? fill : accent,
+        overlayColor: fill.withValues(alpha: 0.12),
         trackHeight: 2,
         thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
       ),
@@ -190,10 +200,10 @@ abstract final class AppTheme {
           side: WidgetStatePropertyAll(BorderSide(color: hairline)),
           textStyle: WidgetStatePropertyAll(text.labelMedium),
           backgroundColor: WidgetStateProperty.resolveWith(
-            (states) => states.contains(WidgetState.selected) ? onSurface : Colors.transparent,
+            (states) => states.contains(WidgetState.selected) ? fill : Colors.transparent,
           ),
           foregroundColor: WidgetStateProperty.resolveWith(
-            (states) => states.contains(WidgetState.selected) ? surface : onSurface,
+            (states) => states.contains(WidgetState.selected) ? onFill : onSurface,
           ),
           shape: WidgetStatePropertyAll(
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.md)),
@@ -207,8 +217,31 @@ abstract final class AppTheme {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.md)),
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(
-        color: onSurface,
+        color: light ? fill : accent,
         linearTrackColor: hairline,
+        circularTrackColor: Colors.transparent,
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected) ? onFill : muted,
+        ),
+        trackColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected) ? fill : hairline,
+        ),
+        trackOutlineColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected) ? fill : muted.withValues(alpha: 0.5),
+        ),
+      ),
+      checkboxTheme: CheckboxThemeData(
+        fillColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected) ? fill : Colors.transparent,
+        ),
+        checkColor: const WidgetStatePropertyAll(onFill),
+      ),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: light ? fill : accent,
+        selectionColor: fill.withValues(alpha: 0.25),
+        selectionHandleColor: light ? fill : accent,
       ),
     );
   }

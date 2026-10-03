@@ -25,11 +25,24 @@ android {
         versionName = flutter.versionName
     }
 
+    // Release signing: the GitHub release workflow sets these; without them (local builds)
+    // releases are signed with the debug key.
+    val releaseKeystore = System.getenv("MARGINALIA_KEYSTORE")?.takeIf { file(it).exists() }
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("MARGINALIA_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("MARGINALIA_KEY_ALIAS")
+                keyPassword = System.getenv("MARGINALIA_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (releaseKeystore != null) "release" else "debug")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 }

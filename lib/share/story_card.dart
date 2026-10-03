@@ -217,25 +217,6 @@ class StoryCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(5),
-                        child: Image.asset('assets/brand/mark-1024.png', width: 18, height: 18),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Marginalia',
-                        style: TextStyle(
-                          fontFamily: FontFamilies.display,
-                          fontSize: 12.5,
-                          color: muted,
-                          letterSpacing: 0.3,
-                        ),
-                      ),
-                    ],
-                  ),
                 ],
               ),
             ),

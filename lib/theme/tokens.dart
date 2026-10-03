@@ -21,9 +21,12 @@ abstract final class Palette {
   static const chalkMuted = Color(0xFF9A9186);
   static const hairlineDark = Color(0xFF2E2A26);
 
-  // The one accent.
-  static const oxblood = Color(0xFF7A2E2E);
-  static const oxbloodLight = Color(0xFFC9776B);
+  // The one accent: a deep maroon. [oxblood] fills on light, [maroonFill] fills on dark,
+  // [oxbloodLight] is maroon text and icons on dark.
+  static const oxblood = Color(0xFF6B1E2B);
+  static const oxbloodLight = Color(0xFFE3A6AE);
+  static const maroonFill = Color(0xFF8E3443);
+  static const onMaroon = Color(0xFFFBF2F0);
 }
 
 abstract final class FontFamilies {

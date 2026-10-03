@@ -53,7 +53,11 @@ class ListenState {
     this.sentenceLocator,
     this.sleep = SleepTimer.off,
     this.sleepEndsAt,
+    this.voice,
   });
+
+  /// The voice reading.
+  final KokoroVoice? voice;
 
   /// A book is being read aloud (playing or paused).
   final bool active;
@@ -73,7 +77,9 @@ class ListenState {
     SleepTimer? sleep,
     DateTime? sleepEndsAt,
     bool clearSleepEnd = false,
+    KokoroVoice? voice,
   }) => ListenState(
+    voice: voice ?? this.voice,
     active: active ?? this.active,
     playing: playing ?? this.playing,
     speed: speed ?? this.speed,
@@ -83,7 +89,7 @@ class ListenState {
   );
 }
 
-/// Reads the open book aloud with Android's voices (see `ListenChannel.kt`). The reader
+/// Reads the open book aloud with Kokoro's voices (see `ListenChannel.kt`). The reader
 /// follows along: it marks the sentence and turns pages, so the reading position is the
 /// listening position.
 class ListenController extends Notifier<ListenState> {
@@ -139,14 +145,15 @@ class ListenController extends Notifier<ListenState> {
           'French, Hindi, Italian, Japanese, Portuguese and Chinese.';
     }
     try {
+      final voice = ref.read(listenVoicesProvider).kokoroFor(language);
       await _channel.invokeMethod('start', {
         'publicationId': publicationId,
         'locator': locatorJson,
         'speed': state.speed,
         'language': language,
-        'speaker': ref.read(listenVoicesProvider).kokoroFor(language).speaker,
+        'speaker': voice.speaker,
       });
-      state = state.copyWith(active: true, playing: true);
+      state = state.copyWith(active: true, playing: true, voice: voice);
       return null;
     } on PlatformException catch (e) {
       if (e.code == 'not_installed') return needsVoices;
@@ -187,7 +194,17 @@ class ListenController extends Notifier<ListenState> {
   Future<void> setVoice(Voice voice) async {
     await _channel.invokeMethod('setVoice', {'id': voice.id});
     await ref.read(listenVoicesProvider).setKokoro(voice.voice);
+    state = state.copyWith(voice: voice.voice);
   }
+
+  /// Reads on from [locatorJson] (a line tapped in the page).
+  Future<void> readFrom(String locatorJson) async {
+    if (!state.active) return;
+    await _channel.invokeMethod('goTo', {'locator': locatorJson});
+  }
+
+  /// The next sleep timer setting, for stepping through them with one button.
+  void nextSleep() => setSleep(SleepTimer.values[(state.sleep.index + 1) % SleepTimer.values.length]);
 
   void setSleep(SleepTimer sleep) {
     _clearSleep();

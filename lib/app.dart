@@ -186,7 +186,10 @@ class _TabsState extends ConsumerState<_Tabs> {
     // Changes go out shortly after the app is left.
     _lifecycle = AppLifecycleListener(
       onHide: () => ref.read(syncProvider.notifier).scheduleSoon(),
-      onResume: _checkFolders,
+      onResume: () {
+        _checkFolders();
+        _quietSync();
+      },
     );
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkFolders());
     // The home-screen widget follows the book being read.
@@ -195,8 +198,22 @@ class _TabsState extends ConsumerState<_Tabs> {
       if (!account.signedIn || _syncedThisLaunch) return;
       _syncedThisLaunch = true;
       ref.read(syncProvider.notifier).schedulePeriodic();
-      context.push('/sync');
+      // The sync screen only for this device's very first sync, when the whole library
+      // arrives; after that, sync quietly (pull down in the library to watch one).
+      if (ref.read(syncProvider).lastSyncedAt == null) {
+        context.push('/sync');
+      } else {
+        _quietSync();
+      }
     }, fireImmediately: true);
+  }
+
+  /// A background sync, unless one ran in the last few minutes.
+  void _quietSync() {
+    final last = ref.read(syncProvider).lastSyncedAt;
+    if (!ref.read(accountProvider).signedIn) return;
+    if (last != null && DateTime.now().difference(last) < const Duration(minutes: 5)) return;
+    ref.read(syncProvider.notifier).syncNow();
   }
 
   @override

@@ -106,24 +106,67 @@ object Kokoro {
     }
 
     /**
-     * Loads the model for reading in [language] (espeak-ng handles languages other than
-     * English and Chinese, so the model is set up per language). Takes a second or two.
+     * All synthesis runs on this one thread. The native model is not thread-safe, and one
+     * thread also means it is never released while in use.
      */
-    fun load(context: Context, language: String?): OfflineTts {
-        val d = dir(context).absolutePath
+    val thread: java.util.concurrent.ExecutorService = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "kokoro").apply { priority = Thread.NORM_PRIORITY + 1 }
+    }
+    val dispatcher = thread.asCoroutineDispatcher()
+
+    /** The one model in memory (it takes a few hundred MB), set up for [loadedFor]. */
+    private var model: OfflineTts? = null
+    private var loadedFor: String? = null
+
+    /** espeak-ng's voice for a book language; "" lets the lexicons handle English and Chinese. */
+    private fun espeakFor(language: String?): String {
         val lang = language?.lowercase().orEmpty()
-        val espeak = when {
+        return when {
             lang.startsWith("es") -> "es"
             lang.startsWith("fr") -> "fr"
             lang.startsWith("hi") -> "hi"
             lang.startsWith("it") -> "it"
             lang.startsWith("ja") -> "ja"
-            lang.startsWith("pt") -> "pt-br"
+            lang.startsWith("pt") -> "pt-BR"
             else -> ""
         }
+    }
+
+    private fun keyFor(language: String?): String {
+        val lang = language?.lowercase().orEmpty()
         val british = lang.startsWith("en-gb") || lang.startsWith("en_gb")
-        val lexicons = (if (british) listOf("lexicon-gb-en.txt", "lexicon-us-en.txt") else listOf("lexicon-us-en.txt", "lexicon-gb-en.txt")) +
-            "lexicon-zh.txt"
+        return espeakFor(language) + if (british) "|gb" else ""
+    }
+
+    /**
+     * The model set up for reading [language], loading it (a second or two) only when the
+     * language changes. Call on [thread] only.
+     */
+    fun modelFor(context: Context, language: String?): OfflineTts {
+        val key = keyFor(language)
+        model?.let { if (loadedFor == key) return it }
+        model?.release()
+        model = null
+        loadedFor = null
+        return load(context, language).also {
+            model = it
+            loadedFor = key
+        }
+    }
+
+    /** Frees the model's memory (after the voices are removed). Call on [thread] only. */
+    fun unload() {
+        model?.release()
+        model = null
+        loadedFor = null
+    }
+
+    private fun load(context: Context, language: String?): OfflineTts {
+        val d = dir(context).absolutePath
+        val lang = language?.lowercase().orEmpty()
+        val british = lang.startsWith("en-gb") || lang.startsWith("en_gb")
+        // One English lexicon (with both, words would be listed twice) plus Chinese.
+        val lexicons = listOf(if (british) "lexicon-gb-en.txt" else "lexicon-us-en.txt", "lexicon-zh.txt")
         val config = OfflineTtsConfig(
             model = OfflineTtsModelConfig(
                 kokoro = OfflineTtsKokoroModelConfig(
@@ -132,7 +175,7 @@ object Kokoro {
                     tokens = "$d/tokens.txt",
                     dataDir = "$d/espeak-ng-data",
                     lexicon = lexicons.filter { File(d, it).isFile }.joinToString(",") { "$d/$it" },
-                    lang = espeak,
+                    lang = espeakFor(language),
                     dictDir = "$d/dict",
                     lengthScale = 1.0f,
                 ),
@@ -263,9 +306,8 @@ class KokoroEngine(
 
     private val main = Handler(Looper.getMainLooper())
 
-    /** sherpa-onnx isn't thread-safe: one synthesis at a time, on one thread. */
-    private val synthesisThread = Executors.newSingleThreadExecutor()
-    private val synthesis = synthesisThread.asCoroutineDispatcher()
+    /** sherpa-onnx isn't thread-safe: every synthesis goes through Kokoro's one thread. */
+    private val synthesis = Kokoro.dispatcher
     private val scope = CoroutineScope(SupervisorJob())
     private val player = PcmPlayer(tts.sampleRate())
     private val lookahead = Lookahead()
@@ -357,9 +399,7 @@ class KokoroEngine(
             prepared.values.forEach { it.cancel() }
             prepared.clear()
         }
-        // After any synthesis still running on that thread.
-        synthesisThread.execute { runCatching { tts.release() } }
-        synthesisThread.shutdown()
+        // The model stays loaded (it's shared, and slow to load); only playback goes.
         player.release()
     }
 
@@ -447,7 +487,7 @@ class KokoroEngineProvider(
         initialPreferences: KokoroPreferences,
     ): Try<TtsEngine<KokoroSettings, KokoroPreferences, KokoroError, KokoroVoice>, org.readium.r2.shared.util.Error> =
         try {
-            val tts = withContext(kotlinx.coroutines.Dispatchers.IO) { Kokoro.load(context, language) }
+            val tts = withContext(Kokoro.dispatcher) { Kokoro.modelFor(context, language) }
             val bookLanguage = Language(language ?: publication.metadata.languages.firstOrNull() ?: "en")
             Try.success(KokoroEngine(tts, publication, tokenizerFactory, currentLocator, initialPreferences, bookLanguage))
         } catch (e: Throwable) {

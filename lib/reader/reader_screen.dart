@@ -25,6 +25,7 @@ import 'page_turn/turn_painters.dart';
 import '../listen/listen_controller.dart';
 import '../listen/kokoro.dart';
 import '../listen/player_bar.dart';
+import '../share/share_sheet.dart' show shareText;
 import '../share/story_card.dart';
 import '../stats/reading_stats.dart';
 import '../storage/local_store.dart';
@@ -151,14 +152,22 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       if (book.driveFileId != null) {
         setState(() => _downloadProgress = 0);
         try {
-          path = await ref.read(syncProvider.notifier).ensureFile(
-            book,
-            onProgress: (p) => mounted ? setState(() => _downloadProgress = p) : null,
-          );
+          // Done when the download says so, or as soon as the file is saved for the book,
+          // whichever comes first (the download call can be slow to finish after saving).
+          path = await Future.any([
+            ref.read(syncProvider.notifier).ensureFile(
+              book,
+              onProgress: (p) => mounted ? setState(() => _downloadProgress = p) : null,
+            ),
+            _fileArrives(book.id),
+          ]);
         } catch (_) {
           path = null;
         }
-        if (mounted) setState(() => _downloadProgress = null);
+        if (!mounted) return;
+        setState(() => _downloadProgress = null);
+        // Open it fresh, exactly as if it had always been on this phone.
+        if (path != null) return _open();
       } else {
         path = null;
       }
@@ -201,6 +210,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     } on ReadiumException catch (e) {
       if (mounted) setState(() => _error = e.message);
     }
+  }
+
+  /// Completes with the book's file once it's saved on this phone.
+  Future<String> _fileArrives(String bookId) async {
+    await for (final book in _db.watchBook(bookId)) {
+      final path = book?.filePath;
+      if (path != null && await File(path).exists()) return path;
+    }
+    // The stream ended (the screen closed): never complete.
+    return Completer<String>().future;
   }
 
   /// "Pixel 8 is at 34%. Jump there?" The page never moves on its own.
@@ -354,6 +373,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       case 'copy':
         await Clipboard.setData(ClipboardData(text: selection.text ?? ''));
         _say('Copied');
+      case 'share':
+        final quote = selection.text?.trim() ?? '';
+        if (quote.isNotEmpty && mounted) await _shareSelection(quote);
       case 'highlight':
         final id = await store.addHighlight(widget.bookId, selection);
         HapticFeedback.selectionClick();
@@ -414,6 +436,52 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         _say('Copied');
       },
     );
+  }
+
+  /// Selected text, as a story image or as plain text.
+  Future<void> _shareSelection(String quote) async {
+    final book = _book;
+    final title = book?.title ?? _publication?.title ?? '';
+    final authors = book?.authors ?? _publication?.authors ?? const <String>[];
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.auto_awesome_mosaic_outlined),
+              title: const Text('Share as an image'),
+              subtitle: const Text('A story-sized card with the cover'),
+              onTap: () => Navigator.pop(context, 'image'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.short_text),
+              title: const Text('Share as text'),
+              subtitle: const Text('The passage, with the title and author'),
+              onTap: () => Navigator.pop(context, 'text'),
+            ),
+            const SizedBox(height: Space.sm),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'image') {
+      await showStorySheet(
+        context,
+        StoryContent(
+          quote: quote,
+          title: title,
+          author: authors.join(', '),
+          accent: ref.read(annotationStoreProvider).lastColor.onLight,
+          coverColor: book?.coverColor == null ? null : Color(book!.coverColor!),
+          coverPath: book?.coverPath,
+        ),
+      );
+    } else {
+      await shareText('“$quote”\n— $title${authors.isEmpty ? '' : ', ${authors.join(', ')}'}');
+    }
   }
 
   /// The passage as a story card, with the book's title, author and cover tint.
@@ -530,6 +598,29 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (signature == _sentHighlights) return;
     _sentHighlights = signature;
     WidgetsBinding.instance.addPostFrameCallback((_) => controller.setHighlights(highlights));
+  }
+
+  /// While listening, a tap on a line reads on from there; otherwise taps turn pages or show
+  /// the controls.
+  Future<void> _onPageTap(Offset point) async {
+    // A tap clears any selection, even if the page never said the selection ended.
+    if (_selecting) setState(() => _selecting = false);
+    // With the controls showing, a tap anywhere on the page just puts them away (rather
+    // than turning the page or jumping the voice underneath them).
+    if (_chromeVisible) {
+      setState(() => _chromeVisible = false);
+      return;
+    }
+    final controller = _controller;
+    if (_listen.isActive && controller != null) {
+      final locator = await controller.locatorAt(point);
+      if (locator != null) {
+        HapticFeedback.selectionClick();
+        await _listen.readFrom(locator);
+        return;
+      }
+    }
+    _pageTurner.currentState?.tapAt(point.dx);
   }
 
   Future<void> _startListening() async {
@@ -705,7 +796,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               _sentHighlights = null;
             }),
             onLocationChanged: _onLocationChanged,
-            onTap: (point) => _pageTurner.currentState?.tapAt(point.dx),
+            onTap: _onPageTap,
             onSelection: _onSelection,
             onHighlightTapped: _editAnnotation,
             onFootnote: _onFootnote,

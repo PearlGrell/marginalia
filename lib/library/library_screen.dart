@@ -11,9 +11,6 @@ import '../theme/tokens.dart';
 import 'book_cover.dart';
 import 'shelf.dart';
 
-/// Set by `scripts/deploy-to-phone.ps1`, so you can tell which build is installed.
-const _buildStamp = String.fromEnvironment('BUILD_STAMP', defaultValue: 'dev');
-
 class LibraryScreen extends ConsumerStatefulWidget {
   const LibraryScreen({super.key});
 
@@ -169,12 +166,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               ],
               _ => [const SliverToBoxAdapter(child: SizedBox.shrink())],
             },
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: Space.xl),
-                child: Center(child: Text('Build $_buildStamp', style: text.labelSmall)),
-              ),
-            ),
           ],
         ),
         ),

@@ -37,7 +37,8 @@ import org.readium.r2.shared.util.getOrElse
  * Reading a book aloud with Kokoro's voices (`marginalia/listen`):
  * - `start {publicationId, locator?, speed, speaker?, language?}` → true; errors
  *   `not_installed` (the voices aren't downloaded), `unsupported_language`, `unsupported`
- * - `play`, `pause`, `nextSentence`, `previousSentence`, `nextChapter`, `previousChapter`
+ * - `play`, `pause`, `nextSentence`, `previousSentence`, `nextChapter`, `previousChapter`,
+ *   `goTo {locator}` (reads on from a tapped line)
  * - `setSpeed {speed}` (0.5 to 3), `voices` → `[{id, name, language, selected}]`,
  *   `setVoice {id}`
  * - `stop`
@@ -77,6 +78,13 @@ class ListenChannel(
             "previousSentence" -> navigator.skipToPreviousUtterance()
             "nextChapter" -> skipChapter(navigator, 1)
             "previousChapter" -> skipChapter(navigator, -1)
+            "goTo" -> {
+                // A line tapped in the page: read on from there.
+                val locator = call.argument<String>("locator")?.let { Locator.fromJSON(JSONObject(it)) }
+                    ?: return result.error("bad_args", "locator is invalid", null)
+                navigator.go(locator)
+                navigator.play()
+            }
             "setSpeed" -> {
                 preferences = preferences.copy(speed = call.argument<Double>("speed") ?: 1.0)
                 navigator.submitPreferences(preferences)

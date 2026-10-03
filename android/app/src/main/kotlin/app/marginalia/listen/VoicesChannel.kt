@@ -1,7 +1,6 @@
 package app.marginalia.listen
 
 import android.app.Activity
-import com.k2fsa.sherpa.onnx.OfflineTts
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -34,8 +33,6 @@ class VoicesChannel(
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    /** The Kokoro model loaded for samples, with the language it was set up for. */
-    private var kokoro: Pair<String, OfflineTts>? = null
     private var kokoroPlayer: PcmPlayer? = null
     private var sample: Job? = null
 
@@ -52,7 +49,7 @@ class VoicesChannel(
                     val ok = try {
                         withContext(Dispatchers.IO) { unpack(File(path)) }
                         true
-                    } catch (_: Exception) {
+                    } catch (_: Throwable) {
                         false
                     }
                     result.success(ok && Kokoro.isInstalled(activity))
@@ -60,8 +57,8 @@ class VoicesChannel(
             }
             "removeKokoro" -> {
                 stopSample()
-                releaseKokoro()
                 scope.launch {
+                    withContext(Kokoro.dispatcher) { Kokoro.unload() }
                     withContext(Dispatchers.IO) { File(activity.filesDir, "kokoro").deleteRecursively() }
                     result.success(null)
                 }
@@ -74,16 +71,21 @@ class VoicesChannel(
                 stopSample()
                 sample = scope.launch {
                     try {
-                        val engine = withContext(Dispatchers.Default) { kokoroFor(language) }
-                        val audio = withContext(Dispatchers.Default) { engine.generate(text, speaker, 1.0f) }
+                        // One at a time, on Kokoro's own thread: tapping another voice while one
+                        // is being made waits for it instead of running two at once.
+                        val audio = withContext(Kokoro.dispatcher) {
+                            Kokoro.modelFor(activity, language).generate(text, speaker, 1.0f)
+                        }
+                        if (!isActive) return@launch result.success(false)
                         val player = kokoroPlayer ?: PcmPlayer(audio.sampleRate).also { kokoroPlayer = it }
                         withContext(Dispatchers.Default) { player.play(audio.samples) { isActive } }
                         result.success(true)
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         result.success(false)
                         throw e
-                    } catch (e: Exception) {
-                        result.error("sample_failed", e.message, null)
+                    } catch (e: Throwable) {
+                        // Never let a sample take the app down (a model that won't load, low memory).
+                        result.error("sample_failed", e.message ?: e.javaClass.simpleName, null)
                     }
                 }
             }
@@ -91,23 +93,10 @@ class VoicesChannel(
         }
     }
 
-    /** The model for [language]'s pronunciation, loaded once and kept while samples play. */
-    private fun kokoroFor(language: String): OfflineTts {
-        val espeakKey = language.lowercase().take(2) + if (language.lowercase().startsWith("en-gb")) "-gb" else ""
-        kokoro?.let { (key, engine) -> if (key == espeakKey) return engine }
-        releaseKokoro()
-        return Kokoro.load(activity, language).also { kokoro = espeakKey to it }
-    }
-
     private fun stopSample() {
         sample?.cancel()
         sample = null
         kokoroPlayer?.stop()
-    }
-
-    private fun releaseKokoro() {
-        kokoro?.second?.release()
-        kokoro = null
     }
 
     /** Unpacks the model's .tar.bz2 next to where it's used, replacing any earlier copy. */
@@ -163,7 +152,6 @@ class VoicesChannel(
         stopSample()
         kokoroPlayer?.release()
         kokoroPlayer = null
-        releaseKokoro()
         scope.cancel()
     }
 }

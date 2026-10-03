@@ -1,26 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The Continue reading home-screen widget (see ContinueReadingWidget.kt). -->
+<!-- Continue reading, two cells tall or more (see ContinueReadingWidget.kt). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/widget_root"
+    android:id="@android:id/background"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_background"
-    android:gravity="center_vertical"
+    android:clipToOutline="true"
     android:orientation="horizontal"
-    android:padding="14dp">
+    android:padding="@dimen/widget_padding">
 
     <ImageView
         android:id="@+id/widget_cover"
-        android:layout_width="56dp"
-        android:layout_height="84dp"
-        android:layout_marginEnd="14dp"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:adjustViewBounds="true"
+        android:background="@drawable/widget_cover_shape"
+        android:clipToOutline="true"
         android:contentDescription="@null"
-        android:scaleType="centerCrop"
+        android:maxWidth="120dp"
+        android:minWidth="48dp"
+        android:scaleType="fitCenter"
         android:src="@mipmap/ic_launcher"/>
 
     <LinearLayout
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
+        android:layout_marginStart="14dp"
         android:layout_weight="1"
         android:orientation="vertical">
 
@@ -28,11 +33,11 @@
             android:id="@+id/widget_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:letterSpacing="0.12"
+            android:letterSpacing="0.1"
             android:text="@string/widget_label"
             android:textAllCaps="true"
             android:textColor="@color/widget_accent"
-            android:textSize="10sp"
+            android:textSize="11sp"
             android:textStyle="bold"/>
 
         <TextView
@@ -45,41 +50,81 @@
             android:maxLines="2"
             android:text="@string/widget_empty"
             android:textColor="@color/widget_ink"
-            android:textSize="16sp"/>
+            android:textSize="18sp"/>
+
+        <!-- Takes whatever height is left, so the author and progress sit at the bottom. -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:minHeight="4dp"/>
 
         <TextView
             android:id="@+id/widget_author"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginBottom="4dp"
             android:ellipsize="end"
             android:maxLines="1"
             android:textColor="@color/widget_muted"
-            android:textSize="12sp"/>
+            android:textSize="13sp"/>
 
         <LinearLayout
             android:id="@+id/widget_progress_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
-            <ProgressBar
-                android:id="@+id/widget_progress"
-                style="?android:attr/progressBarStyleHorizontal"
+            <LinearLayout
                 android:layout_width="0dp"
-                android:layout_height="4dp"
-                android:layout_weight="1"
-                android:max="100"
-                android:progressDrawable="@drawable/widget_progress"/>
-
-            <TextView
-                android:id="@+id/widget_percent"
-                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:textColor="@color/widget_muted"
-                android:textSize="11sp"/>
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/widget_percent"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/widget_muted"
+                    android:textSize="12sp"/>
+
+                <ProgressBar
+                    android:id="@+id/widget_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:layout_marginTop="4dp"
+                    android:max="100"
+                    android:progressDrawable="@drawable/widget_progress"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/widget_resume"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginStart="12dp"
+                android:background="@drawable/widget_pill"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp">
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/widget_play"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="@string/widget_resume"
+                    android:textColor="@color/widget_on_accent"
+                    android:textSize="13sp"
+                    android:textStyle="bold"/>
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>

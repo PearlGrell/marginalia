@@ -173,6 +173,16 @@ class ReadiumViewController {
   Future<void> markSearchResult(String? locatorJson, int color) =>
       _channel.invokeMethod('markSearchResult', {'locator': locatorJson, 'color': color});
 
+  /// The paragraph at a point (fractions of the view) as Locator JSON, or null if there's no
+  /// text there.
+  Future<String?> locatorAt(Offset point) async {
+    try {
+      return await _channel.invokeMethod<String>('locatorAt', {'x': point.dx, 'y': point.dy});
+    } on PlatformException {
+      return null;
+    }
+  }
+
   /// Shows [text] under the paragraph marked [id] when it was selected for translating.
   Future<bool> insertTranslation(String id, String text) async =>
       await _channel.invokeMethod<bool>('insertTranslation', {'id': id, 'text': text}) ?? false;
