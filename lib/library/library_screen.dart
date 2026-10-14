@@ -61,7 +61,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             ListTile(
               leading: const Icon(Icons.description_outlined),
               title: const Text('Add files'),
-              subtitle: const Text('Pick one or more EPUBs'),
+              subtitle: const Text('EPUB, PDF and CBZ comics, one or more'),
               onTap: () {
                 Navigator.pop(context);
                 _import((i) => i.importFiles());
@@ -70,7 +70,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             ListTile(
               leading: const Icon(Icons.folder_outlined),
               title: const Text('Add a folder'),
-              subtitle: const Text('Every EPUB inside, subfolders too; duplicates skipped'),
+              subtitle: const Text('Every book inside, subfolders too; duplicates skipped'),
               onTap: () {
                 Navigator.pop(context);
                 _import((i) => i.importFolder());
@@ -79,7 +79,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             ListTile(
               leading: const Icon(Icons.folder_special_outlined),
               title: const Text('Watch a folder'),
-              subtitle: const Text('New EPUBs put there join your library by themselves'),
+              subtitle: const Text('New books put there join your library by themselves'),
               onTap: () {
                 Navigator.pop(context);
                 context.push('/settings/folders');
@@ -467,7 +467,7 @@ class _EmptyLibrary extends StatelessWidget {
           Text('Your shelves are empty', style: text.headlineMedium),
           const SizedBox(height: Space.sm),
           Text(
-            'Add EPUBs from this phone, a whole folder at once, or start with a classic.',
+            'Add books (EPUB, PDF, CBZ) from this phone, a whole folder at once, or start with a classic.',
             style: text.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: Space.xl),

@@ -55,7 +55,7 @@ class LibraryExport {
       final base = safeFileName(b.authors.isEmpty ? b.title : '${b.title} - ${b.authors.first}');
       String? epub;
       if (b.filePath case final path? when await File(path).exists()) {
-        epub = 'books/${unique(base, '.epub')}';
+        epub = 'books/${unique(base, '.${b.format}')}';
         files.add((path, epub));
       } else {
         missing.add(b);

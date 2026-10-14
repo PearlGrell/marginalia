@@ -213,7 +213,7 @@ class SyncController extends Notifier<SyncStatus> {
     await Workmanager().cancelByUniqueName(_soon);
   }
 
-  /// The local path of [book]'s EPUB, downloading it from Drive the first time it's opened
+  /// The local path of [book]'s file, downloading it from Drive the first time it's opened
   /// on this device. Two requests for one book share one download.
   Future<String?> ensureFile(Book book, {void Function(double)? onProgress}) async {
     final path = book.filePath;
@@ -231,7 +231,7 @@ class SyncController extends Notifier<SyncStatus> {
     try {
       // The app cache: clearing it in Android settings frees the space; notes stay.
       final dir = Directory('${(await getApplicationCacheDirectory()).path}/books');
-      final target = File('${dir.path}/${book.id}.epub');
+      final target = File('${dir.path}/${book.id}.${book.format}');
       await DriveStore(client).download(
         fileId,
         target,

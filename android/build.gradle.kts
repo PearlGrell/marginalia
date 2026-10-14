@@ -2,10 +2,13 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        // sherpa-onnx (Kokoro voices) is published there.
+        // sherpa-onnx (Kokoro voices) and PDFium (PDF books, for Readium) are published there.
         maven {
             url = uri("https://jitpack.io")
-            content { includeGroupByRegex("com\\.github\\.k2-fsa.*") }
+            content {
+                includeGroupByRegex("com\\.github\\.k2-fsa.*")
+                includeGroup("com.github.marain87")
+            }
         }
     }
 }

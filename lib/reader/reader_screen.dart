@@ -807,8 +807,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           source: _controller == null ? null : _ReadiumPageSource(_controller!),
           // _sentPreferences only changes identity when the rendering does.
           pageKey: (_location?.locatorJson, _sentPreferences),
-          // Scrolling moves the text itself; side taps and swipes jump a screen.
-          style: prefs.scroll ? TurnStyle.none : prefs.turnStyle,
+          // Scrolling moves the text itself; side taps and swipes jump a screen. PDF and
+          // comic pages move themselves too.
+          style: prefs.scroll || publication.isFixedLayout ? TurnStyle.none : prefs.turnStyle,
           pageBack: theme.pageBack,
           rightToLeft: publication.isRightToLeft,
           haptics: prefs.haptics,
@@ -821,6 +822,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             publicationId: publication.id,
             preferences: readium,
             scroll: prefs.scroll,
+            nativeGestures: publication.isFixedLayout,
             initialLocatorJson: _initialLocator,
             onCreated: (controller) => setState(() {
               _controller = controller;
@@ -954,12 +956,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(color: theme.ink),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.search),
-                    color: theme.ink,
-                    tooltip: 'Search this book',
-                    onPressed: _controller == null ? null : _openSearch,
-                  ),
+                  // PDF and comics have no text to search.
+                  if (!(_publication?.isFixedLayout ?? false))
+                    IconButton(
+                      icon: const Icon(Icons.search),
+                      color: theme.ink,
+                      tooltip: 'Search this book',
+                      onPressed: _controller == null ? null : _openSearch,
+                    ),
                   IconButton(
                     icon: Icon(_onBookmarkedPage ? Icons.bookmark : Icons.bookmark_border),
                     color: _onBookmarkedPage ? Theme.of(context).colorScheme.primary : theme.ink,
@@ -1095,12 +1099,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                         color: theme.ink,
                         onPressed: () => showDisplaySheet(context, coverColor: _coverColor),
                       ),
-                      _ChromeButton(
-                        icon: Icons.headphones_outlined,
-                        label: 'Listen',
-                        color: theme.ink,
-                        onPressed: _startListening,
-                      ),
+                      if (!(_publication?.isFixedLayout ?? false))
+                        _ChromeButton(
+                          icon: Icons.headphones_outlined,
+                          label: 'Listen',
+                          color: theme.ink,
+                          onPressed: _startListening,
+                        ),
                     ],
                   ),
                 ],

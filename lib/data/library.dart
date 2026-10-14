@@ -85,6 +85,12 @@ class _NativeLibrary {
 
   Future<Map<Object?, Object?>> importFile(String uri) async =>
       (await _channel.invokeMapMethod<Object?, Object?>('importFile', {'uri': uri}))!;
+
+  /// A book another app asked to open, once.
+  Future<({String uri, String name})?> takeOpenedFile() async {
+    final m = await _channel.invokeMapMethod<String, String>('takeOpenedFile');
+    return m == null ? null : (uri: m['uri']!, name: m['name']!);
+  }
 }
 
 /// Progress of the import under way, if any.
@@ -197,10 +203,17 @@ class LibraryImporter extends Notifier<ImportProgress> {
   /// A book downloaded from a catalog. Returns its library id.
   Future<String> importDownloaded(File file, {required BookSource source, required String sourceId}) async {
     final uri = Uri.file(file.path).toString();
-    await _importOne(uri, file.uri.pathSegments.last, source: source, sourceId: sourceId);
-    final m = await _db.findBySource(source, sourceId);
+    final (:id, added: _) = await _importOne(uri, file.uri.pathSegments.last, source: source, sourceId: sourceId);
     if (await file.exists()) await file.delete();
-    return m!.id;
+    return id;
+  }
+
+  /// A book another app asked to open, if there's one waiting: added to the library (or
+  /// found there). Returns its library id.
+  Future<String?> importOpenedFile() async {
+    final file = await _native.takeOpenedFile();
+    if (file == null) return null;
+    return (await _importOne(file.uri, file.name)).id;
   }
 
   Future<ImportProgress> _importAll(List<({String uri, String name})> files) async {
@@ -208,7 +221,7 @@ class LibraryImporter extends Notifier<ImportProgress> {
     for (final file in files) {
       state = state.copyWith(current: file.name);
       try {
-        final added = await _importOne(file.uri, file.name);
+        final (:added, id: _) = await _importOne(file.uri, file.name);
         state = state.copyWith(
           added: state.added + (added ? 1 : 0),
           duplicates: state.duplicates + (added ? 0 : 1),
@@ -223,8 +236,8 @@ class LibraryImporter extends Notifier<ImportProgress> {
     return finished;
   }
 
-  /// Returns false if the book was already in the library.
-  Future<bool> _importOne(
+  /// The book's library id, and whether it was added (false if it was already there).
+  Future<({bool added, String id})> _importOne(
     String uri,
     String fileName, {
     BookSource source = BookSource.import,
@@ -249,7 +262,7 @@ class LibraryImporter extends Notifier<ImportProgress> {
       if (sourceId != null && existing.sourceId == null) {
         await _db.updateBook(id, BooksCompanion(source: Value(source), sourceId: Value(sourceId)));
       }
-      return false;
+      return (added: false, id: id);
     }
 
     final title = (m['title'] as String?) ?? _titleFromFileName(fileName);
@@ -265,6 +278,7 @@ class LibraryImporter extends Notifier<ImportProgress> {
         language: Value(m['language'] as String?),
         description: Value(m['description'] as String?),
         filePath: Value(m['path'] as String?),
+        format: Value(bookFormatOf(m['path'] as String? ?? fileName)),
         fileSize: Value((m['fileSize'] as num?)?.toInt() ?? 0),
         coverPath: Value(m['coverPath'] as String?),
         coverColor: Value((m['coverColor'] as num?)?.toInt()),
@@ -284,7 +298,7 @@ class LibraryImporter extends Notifier<ImportProgress> {
         deleted: const Value(false),
       ),
     );
-    return true;
+    return (added: true, id: id);
   }
 
   /// Removes a book from the library and frees its space on this device.
@@ -304,7 +318,7 @@ class LibraryImporter extends Notifier<ImportProgress> {
   }
 
   static String _titleFromFileName(String name) => name
-      .replaceAll(RegExp(r'\.epub$', caseSensitive: false), '')
+      .replaceAll(RegExp(r'\.(epub|pdf|cbz)$', caseSensitive: false), '')
       .replaceAll(RegExp(r'[_]+'), ' ')
       .trim();
 }

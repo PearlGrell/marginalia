@@ -204,6 +204,12 @@ class _TabsState extends ConsumerState<_Tabs> {
       },
     );
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkFolders());
+    // A book opened from another app, now or while the app runs.
+    const MethodChannel('marginalia/library').setMethodCallHandler((call) async {
+      if (call.method == 'onFileOpened') await _openFromAnotherApp();
+      return null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _openFromAnotherApp());
     // The home-screen widget follows the book being read.
     ref.listenManual(continueReadingProvider, (_, next) => _updateWidget(next.value), fireImmediately: true);
     // And shows the streak and today's reading.
@@ -278,6 +284,22 @@ class _TabsState extends ConsumerState<_Tabs> {
     _statusShown = signature;
     try {
       await const MethodChannel('marginalia/device').invokeMethod('updateWidgetStatus', status);
+    } on MissingPluginException {
+      // In tests.
+    }
+  }
+
+  /// Adds the book another app asked to open (if any) and opens it.
+  Future<void> _openFromAnotherApp() async {
+    try {
+      final id = await ref.read(libraryImporterProvider.notifier).importOpenedFile();
+      if (id != null && mounted) context.push('/read/$id');
+    } on PlatformException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("That file couldn't be opened as a book.")),
+        );
+      }
     } on MissingPluginException {
       // In tests.
     }

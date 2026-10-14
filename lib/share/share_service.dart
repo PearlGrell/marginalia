@@ -149,7 +149,7 @@ class ShareService {
         onStep?.call('Copying ${i + 1} of ${books.length}: ${book.title}');
         final path = await _ref.read(syncProvider.notifier).ensureFile(book);
         if (path == null) throw ShareException("“${book.title}” isn't on this phone or in your Drive.");
-        final fileId = await _upload(api, folder, File(path), '${book.title}.epub', 'application/epub+zip');
+        final fileId = await _upload(api, folder, File(path), '${book.title}.${book.format}', bookMimeType(book.format));
         String? coverId;
         if (book.coverPath case final cover? when await File(cover).exists()) {
           coverId = await _upload(api, folder, File(cover), '${book.title} (cover).jpg', 'image/jpeg');

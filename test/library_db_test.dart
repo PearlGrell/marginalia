@@ -132,7 +132,7 @@ void main() {
     expect(await db.dirtySessions(), isEmpty);
   });
 
-  test('upgrading keeps sittings recorded before pages were kept, under their new ids', () async {
+  test('upgrading keeps old sittings under their new ids, and learns each book’s format', () async {
     await db.close();
     final start = DateTime.utc(2026, 10, 1, 8).millisecondsSinceEpoch ~/ 1000;
     db = AppDatabase(
@@ -150,6 +150,9 @@ void main() {
             "INSERT INTO reading_sessions (id, book_id, started_at, ended_at, seconds, updated_at, dirty) "
             "VALUES ('k3x9', 'b', $start, ${start + 600}, 600, $start, 0)",
           );
+          // Books as far as the later steps touch them.
+          raw.execute('CREATE TABLE books (id TEXT NOT NULL PRIMARY KEY, file_path TEXT)');
+          raw.execute("INSERT INTO books VALUES ('e', '/lib/e.epub'), ('p', '/lib/p.PDF'), ('c', '/lib/c.cbz')");
           raw.execute('PRAGMA user_version = 6');
         },
       ),
@@ -157,5 +160,8 @@ void main() {
     final live = await db.allSessions();
     expect([for (final s in live) s.id], ['(b)(page-?-?)(20261001T080000Z)']);
     expect(live.single.seconds, 600);
+    // Each book's format comes from its file.
+    final formats = await db.customSelect('SELECT id, format FROM books ORDER BY id').get();
+    expect({for (final r in formats) r.read<String>('id'): r.read<String>('format')}, {'c': 'cbz', 'e': 'epub', 'p': 'pdf'});
   });
 }

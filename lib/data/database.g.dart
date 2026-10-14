@@ -90,6 +90,16 @@ class $BooksTable extends Books with TableInfo<$BooksTable, Book> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _formatMeta = const VerificationMeta('format');
+  @override
+  late final GeneratedColumn<String> format = GeneratedColumn<String>(
+    'format',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('epub'),
+  );
   static const VerificationMeta _fileSizeMeta = const VerificationMeta(
     'fileSize',
   );
@@ -349,6 +359,7 @@ class $BooksTable extends Books with TableInfo<$BooksTable, Book> {
     language,
     description,
     filePath,
+    format,
     fileSize,
     coverPath,
     driveFileId,
@@ -432,6 +443,12 @@ class $BooksTable extends Books with TableInfo<$BooksTable, Book> {
       context.handle(
         _filePathMeta,
         filePath.isAcceptableOrUnknown(data['file_path']!, _filePathMeta),
+      );
+    }
+    if (data.containsKey('format')) {
+      context.handle(
+        _formatMeta,
+        format.isAcceptableOrUnknown(data['format']!, _formatMeta),
       );
     }
     if (data.containsKey('file_size')) {
@@ -616,6 +633,10 @@ class $BooksTable extends Books with TableInfo<$BooksTable, Book> {
         DriftSqlType.string,
         data['${effectivePrefix}file_path'],
       ),
+      format: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}format'],
+      )!,
       fileSize: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}file_size'],
@@ -731,7 +752,7 @@ class $BooksTable extends Books with TableInfo<$BooksTable, Book> {
 }
 
 class Book extends DataClass implements Insertable<Book> {
-  /// SHA-256 of the EPUB file.
+  /// SHA-256 of the book's file.
   final String id;
   final String title;
   final List<String> authors;
@@ -744,12 +765,15 @@ class Book extends DataClass implements Insertable<Book> {
   final String? language;
   final String? description;
 
-  /// The EPUB on this device, if it is here.
+  /// The book's file on this device, if it is here.
   final String? filePath;
+
+  /// "epub", "pdf" or "cbz" (see [bookFormatOf]).
+  final String format;
   final int fileSize;
   final String? coverPath;
 
-  /// The EPUB and cover in the user's Google Drive app folder, once uploaded.
+  /// The book's file and cover in the user's Google Drive app folder, once uploaded.
   final String? driveFileId;
   final String? driveCoverId;
 
@@ -795,6 +819,7 @@ class Book extends DataClass implements Insertable<Book> {
     this.language,
     this.description,
     this.filePath,
+    required this.format,
     required this.fileSize,
     this.coverPath,
     this.driveFileId,
@@ -839,6 +864,7 @@ class Book extends DataClass implements Insertable<Book> {
     if (!nullToAbsent || filePath != null) {
       map['file_path'] = Variable<String>(filePath);
     }
+    map['format'] = Variable<String>(format);
     map['file_size'] = Variable<int>(fileSize);
     if (!nullToAbsent || coverPath != null) {
       map['cover_path'] = Variable<String>(coverPath);
@@ -912,6 +938,7 @@ class Book extends DataClass implements Insertable<Book> {
       filePath: filePath == null && nullToAbsent
           ? const Value.absent()
           : Value(filePath),
+      format: Value(format),
       fileSize: Value(fileSize),
       coverPath: coverPath == null && nullToAbsent
           ? const Value.absent()
@@ -975,6 +1002,7 @@ class Book extends DataClass implements Insertable<Book> {
       language: serializer.fromJson<String?>(json['language']),
       description: serializer.fromJson<String?>(json['description']),
       filePath: serializer.fromJson<String?>(json['filePath']),
+      format: serializer.fromJson<String>(json['format']),
       fileSize: serializer.fromJson<int>(json['fileSize']),
       coverPath: serializer.fromJson<String?>(json['coverPath']),
       driveFileId: serializer.fromJson<String?>(json['driveFileId']),
@@ -1015,6 +1043,7 @@ class Book extends DataClass implements Insertable<Book> {
       'language': serializer.toJson<String?>(language),
       'description': serializer.toJson<String?>(description),
       'filePath': serializer.toJson<String?>(filePath),
+      'format': serializer.toJson<String>(format),
       'fileSize': serializer.toJson<int>(fileSize),
       'coverPath': serializer.toJson<String?>(coverPath),
       'driveFileId': serializer.toJson<String?>(driveFileId),
@@ -1053,6 +1082,7 @@ class Book extends DataClass implements Insertable<Book> {
     Value<String?> language = const Value.absent(),
     Value<String?> description = const Value.absent(),
     Value<String?> filePath = const Value.absent(),
+    String? format,
     int? fileSize,
     Value<String?> coverPath = const Value.absent(),
     Value<String?> driveFileId = const Value.absent(),
@@ -1084,6 +1114,7 @@ class Book extends DataClass implements Insertable<Book> {
     language: language.present ? language.value : this.language,
     description: description.present ? description.value : this.description,
     filePath: filePath.present ? filePath.value : this.filePath,
+    format: format ?? this.format,
     fileSize: fileSize ?? this.fileSize,
     coverPath: coverPath.present ? coverPath.value : this.coverPath,
     driveFileId: driveFileId.present ? driveFileId.value : this.driveFileId,
@@ -1121,6 +1152,7 @@ class Book extends DataClass implements Insertable<Book> {
           ? data.description.value
           : this.description,
       filePath: data.filePath.present ? data.filePath.value : this.filePath,
+      format: data.format.present ? data.format.value : this.format,
       fileSize: data.fileSize.present ? data.fileSize.value : this.fileSize,
       coverPath: data.coverPath.present ? data.coverPath.value : this.coverPath,
       driveFileId: data.driveFileId.present
@@ -1175,6 +1207,7 @@ class Book extends DataClass implements Insertable<Book> {
           ..write('language: $language, ')
           ..write('description: $description, ')
           ..write('filePath: $filePath, ')
+          ..write('format: $format, ')
           ..write('fileSize: $fileSize, ')
           ..write('coverPath: $coverPath, ')
           ..write('driveFileId: $driveFileId, ')
@@ -1211,6 +1244,7 @@ class Book extends DataClass implements Insertable<Book> {
     language,
     description,
     filePath,
+    format,
     fileSize,
     coverPath,
     driveFileId,
@@ -1246,6 +1280,7 @@ class Book extends DataClass implements Insertable<Book> {
           other.language == this.language &&
           other.description == this.description &&
           other.filePath == this.filePath &&
+          other.format == this.format &&
           other.fileSize == this.fileSize &&
           other.coverPath == this.coverPath &&
           other.driveFileId == this.driveFileId &&
@@ -1279,6 +1314,7 @@ class BooksCompanion extends UpdateCompanion<Book> {
   final Value<String?> language;
   final Value<String?> description;
   final Value<String?> filePath;
+  final Value<String> format;
   final Value<int> fileSize;
   final Value<String?> coverPath;
   final Value<String?> driveFileId;
@@ -1311,6 +1347,7 @@ class BooksCompanion extends UpdateCompanion<Book> {
     this.language = const Value.absent(),
     this.description = const Value.absent(),
     this.filePath = const Value.absent(),
+    this.format = const Value.absent(),
     this.fileSize = const Value.absent(),
     this.coverPath = const Value.absent(),
     this.driveFileId = const Value.absent(),
@@ -1344,6 +1381,7 @@ class BooksCompanion extends UpdateCompanion<Book> {
     this.language = const Value.absent(),
     this.description = const Value.absent(),
     this.filePath = const Value.absent(),
+    this.format = const Value.absent(),
     this.fileSize = const Value.absent(),
     this.coverPath = const Value.absent(),
     this.driveFileId = const Value.absent(),
@@ -1383,6 +1421,7 @@ class BooksCompanion extends UpdateCompanion<Book> {
     Expression<String>? language,
     Expression<String>? description,
     Expression<String>? filePath,
+    Expression<String>? format,
     Expression<int>? fileSize,
     Expression<String>? coverPath,
     Expression<String>? driveFileId,
@@ -1416,6 +1455,7 @@ class BooksCompanion extends UpdateCompanion<Book> {
       if (language != null) 'language': language,
       if (description != null) 'description': description,
       if (filePath != null) 'file_path': filePath,
+      if (format != null) 'format': format,
       if (fileSize != null) 'file_size': fileSize,
       if (coverPath != null) 'cover_path': coverPath,
       if (driveFileId != null) 'drive_file_id': driveFileId,
@@ -1451,6 +1491,7 @@ class BooksCompanion extends UpdateCompanion<Book> {
     Value<String?>? language,
     Value<String?>? description,
     Value<String?>? filePath,
+    Value<String>? format,
     Value<int>? fileSize,
     Value<String?>? coverPath,
     Value<String?>? driveFileId,
@@ -1484,6 +1525,7 @@ class BooksCompanion extends UpdateCompanion<Book> {
       language: language ?? this.language,
       description: description ?? this.description,
       filePath: filePath ?? this.filePath,
+      format: format ?? this.format,
       fileSize: fileSize ?? this.fileSize,
       coverPath: coverPath ?? this.coverPath,
       driveFileId: driveFileId ?? this.driveFileId,
@@ -1538,6 +1580,9 @@ class BooksCompanion extends UpdateCompanion<Book> {
     }
     if (filePath.present) {
       map['file_path'] = Variable<String>(filePath.value);
+    }
+    if (format.present) {
+      map['format'] = Variable<String>(format.value);
     }
     if (fileSize.present) {
       map['file_size'] = Variable<int>(fileSize.value);
@@ -1628,6 +1673,7 @@ class BooksCompanion extends UpdateCompanion<Book> {
           ..write('language: $language, ')
           ..write('description: $description, ')
           ..write('filePath: $filePath, ')
+          ..write('format: $format, ')
           ..write('fileSize: $fileSize, ')
           ..write('coverPath: $coverPath, ')
           ..write('driveFileId: $driveFileId, ')
@@ -5140,6 +5186,7 @@ typedef $$BooksTableCreateCompanionBuilder =
       Value<String?> language,
       Value<String?> description,
       Value<String?> filePath,
+      Value<String> format,
       Value<int> fileSize,
       Value<String?> coverPath,
       Value<String?> driveFileId,
@@ -5174,6 +5221,7 @@ typedef $$BooksTableUpdateCompanionBuilder =
       Value<String?> language,
       Value<String?> description,
       Value<String?> filePath,
+      Value<String> format,
       Value<int> fileSize,
       Value<String?> coverPath,
       Value<String?> driveFileId,
@@ -5288,6 +5336,11 @@ class $$BooksTableFilterComposer extends Composer<_$AppDatabase, $BooksTable> {
 
   ColumnFilters<String> get filePath => $composableBuilder(
     column: $table.filePath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get format => $composableBuilder(
+    column: $table.format,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5504,6 +5557,11 @@ class $$BooksTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get format => $composableBuilder(
+    column: $table.format,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get fileSize => $composableBuilder(
     column: $table.fileSize,
     builder: (column) => ColumnOrderings(column),
@@ -5651,6 +5709,9 @@ class $$BooksTableAnnotationComposer
 
   GeneratedColumn<String> get filePath =>
       $composableBuilder(column: $table.filePath, builder: (column) => column);
+
+  GeneratedColumn<String> get format =>
+      $composableBuilder(column: $table.format, builder: (column) => column);
 
   GeneratedColumn<int> get fileSize =>
       $composableBuilder(column: $table.fileSize, builder: (column) => column);
@@ -5826,6 +5887,7 @@ class $$BooksTableTableManager
                 Value<String?> language = const Value.absent(),
                 Value<String?> description = const Value.absent(),
                 Value<String?> filePath = const Value.absent(),
+                Value<String> format = const Value.absent(),
                 Value<int> fileSize = const Value.absent(),
                 Value<String?> coverPath = const Value.absent(),
                 Value<String?> driveFileId = const Value.absent(),
@@ -5858,6 +5920,7 @@ class $$BooksTableTableManager
                 language: language,
                 description: description,
                 filePath: filePath,
+                format: format,
                 fileSize: fileSize,
                 coverPath: coverPath,
                 driveFileId: driveFileId,
@@ -5892,6 +5955,7 @@ class $$BooksTableTableManager
                 Value<String?> language = const Value.absent(),
                 Value<String?> description = const Value.absent(),
                 Value<String?> filePath = const Value.absent(),
+                Value<String> format = const Value.absent(),
                 Value<int> fileSize = const Value.absent(),
                 Value<String?> coverPath = const Value.absent(),
                 Value<String?> driveFileId = const Value.absent(),
@@ -5924,6 +5988,7 @@ class $$BooksTableTableManager
                 language: language,
                 description: description,
                 filePath: filePath,
+                format: format,
                 fileSize: fileSize,
                 coverPath: coverPath,
                 driveFileId: driveFileId,

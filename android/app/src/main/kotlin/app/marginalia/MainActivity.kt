@@ -1,5 +1,7 @@
 package app.marginalia
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.fragment.app.commitNow
@@ -42,7 +44,39 @@ class MainActivity : FlutterFragmentActivity() {
                 stale.forEach { remove(it) }
             }
         }
+        if (savedInstanceState == null) pendingFile = openedFile(intent)
+        deliverPendingFile()
     }
+
+    /** A file to open that arrived before the library channel was there. */
+    private var pendingFile: Uri? = null
+
+    private fun deliverPendingFile() {
+        val channel = libraryChannel ?: return
+        pendingFile?.let(channel::opened)
+        pendingFile = null
+    }
+
+    /** A book file another app asked to open ("Open with Marginalia"), if [intent] is one. */
+    private fun openedFile(intent: Intent?): Uri? {
+        if (intent?.action != Intent.ACTION_VIEW) return null
+        val uri = intent.data ?: return null
+        return uri.takeIf { it.scheme == "content" || it.scheme == "file" }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        // A file isn't a route: Flutter's deep linking would show it as a missing page.
+        val file = openedFile(intent)
+        if (file != null) {
+            setIntent(intent)
+            libraryChannel?.opened(file)
+            return
+        }
+        super.onNewIntent(intent)
+    }
+
+    /** Only marginalia:// links are routes in the app. */
+    override fun shouldHandleDeeplinking(): Boolean = openedFile(intent) == null && super.shouldHandleDeeplinking()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -51,6 +85,7 @@ class MainActivity : FlutterFragmentActivity() {
         readiumChannel = ReadiumChannel(messenger, repository)
         deviceChannel = DeviceChannel(messenger, this)
         libraryChannel = LibraryChannel(messenger, this, repository)
+        deliverPendingFile()
         listenChannel = ListenChannel(messenger, this, repository)
         voicesChannel = VoicesChannel(messenger, this)
         flutterEngine.platformViewsController.registry.registerViewFactory(

@@ -34,7 +34,7 @@ class StringListConverter extends TypeConverter<List<String>, String> {
 /// changes per field and spread removals to other devices.
 @DataClassName('Book')
 class Books extends Table {
-  /// SHA-256 of the EPUB file.
+  /// SHA-256 of the book's file.
   TextColumn get id => text()();
   TextColumn get title => text()();
   TextColumn get authors => text().map(const StringListConverter())();
@@ -47,12 +47,15 @@ class Books extends Table {
   TextColumn get language => text().nullable()();
   TextColumn get description => text().nullable()();
 
-  /// The EPUB on this device, if it is here.
+  /// The book's file on this device, if it is here.
   TextColumn get filePath => text().nullable()();
+
+  /// "epub", "pdf" or "cbz" (see [bookFormatOf]).
+  TextColumn get format => text().withDefault(const Constant('epub'))();
   IntColumn get fileSize => integer().withDefault(const Constant(0))();
   TextColumn get coverPath => text().nullable()();
 
-  /// The EPUB and cover in the user's Google Drive app folder, once uploaded.
+  /// The book's file and cover in the user's Google Drive app folder, once uploaded.
   TextColumn get driveFileId => text().nullable()();
   TextColumn get driveCoverId => text().nullable()();
 
@@ -193,6 +196,19 @@ class ReadingSessions extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// A book file's format from its name: "pdf", "cbz", or "epub" for anything else.
+String bookFormatOf(String path) {
+  final extension = path.split('.').last.toLowerCase();
+  return extension == 'pdf' || extension == 'cbz' ? extension : 'epub';
+}
+
+/// The media type of a book [format].
+String bookMimeType(String format) => switch (format) {
+  'pdf' => 'application/pdf',
+  'cbz' => 'application/vnd.comicbook+zip',
+  _ => 'application/epub+zip',
+};
+
 /// A sitting's id, named by the book (its fingerprint id), the pages read and when it
 /// started: `(3f9a…)(page-12-30)(20261014T072301Z)` (`?` for pages not known). The same sitting always gets the same id, on every device, so
 /// saving or syncing it again replaces it rather than counting it twice.
@@ -317,7 +333,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? driftDatabase(name: 'marginalia'));
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -348,6 +364,11 @@ class AppDatabase extends _$AppDatabase {
         await m.addColumn(readingSessions, readingSessions.startPosition);
         await m.addColumn(readingSessions, readingSessions.endPosition);
         await _normalizeSessions();
+      }
+      if (from < 8) {
+        await m.addColumn(books, books.format);
+        await customStatement("UPDATE books SET format = 'pdf' WHERE lower(file_path) LIKE '%.pdf'");
+        await customStatement("UPDATE books SET format = 'cbz' WHERE lower(file_path) LIKE '%.cbz'");
       }
     },
   );

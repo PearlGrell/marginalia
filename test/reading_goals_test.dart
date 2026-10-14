@@ -35,6 +35,7 @@ Book finished(String id, DateTime at) => Book(
   tags: const [],
   source: BookSource.import,
   fileSize: 0,
+    format: 'epub',
   ratingHalves: 0,
 );
 

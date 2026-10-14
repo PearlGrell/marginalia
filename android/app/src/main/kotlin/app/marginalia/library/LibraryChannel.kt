@@ -34,6 +34,8 @@ import org.readium.r2.shared.publication.services.cover
  *   returns its metadata (see [BookImporter])
  * - `pickCover {bookId}` → lets the reader pick an image and saves it as the book's cover:
  *   `{coverPath, coverColor}`, or null if nothing was picked
+ * - `takeOpenedFile` → `{uri, name}` of a book another app asked to open, once, or null.
+ *   Dart is told with `onFileOpened` when one arrives.
  */
 class LibraryChannel(
     messenger: BinaryMessenger,
@@ -48,9 +50,26 @@ class LibraryChannel(
     private val importer = BookImporter(activity.applicationContext, repository)
     private val requestCount = AtomicInteger()
 
+    /** A book another app asked to open, until Dart takes it. */
+    private var openedFile: Map<String, String>? = null
+
+    /** Another app asked to open [uri] ("Open with Marginalia"). */
+    fun opened(uri: Uri) {
+        val name = runCatching {
+            activity.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { if (it.moveToFirst()) it.getString(0) else null }
+        }.getOrNull() ?: uri.lastPathSegment ?: "Book"
+        openedFile = mapOf("uri" to uri.toString(), "name" to name)
+        channel.invokeMethod("onFileOpened", null)
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "pickFiles" -> pickFiles(result)
+            "takeOpenedFile" -> {
+                result.success(openedFile)
+                openedFile = null
+            }
             "pickFolder" -> pickFolder(result)
             "pickCover" -> {
                 val bookId = call.argument<String>("bookId")
@@ -95,8 +114,8 @@ class LibraryChannel(
             launcher.unregister()
             result.success(uris.map { it.toString() })
         }
-        // Many file managers label EPUBs as generic binaries; the import checks each file.
-        launcher.launch(arrayOf("application/epub+zip", "application/octet-stream"))
+        // Many file managers label books as generic binaries; the import checks each file.
+        launcher.launch(BOOK_TYPES)
     }
 
     private fun pickFolder(result: MethodChannel.Result) {
@@ -161,7 +180,7 @@ class LibraryChannel(
                     val mime = cursor.getString(2)
                     when {
                         mime == DocumentsContract.Document.MIME_TYPE_DIR -> pending.add(id)
-                        mime == "application/epub+zip" || name.endsWith(".epub", ignoreCase = true) ->
+                        mime in BOOK_TYPES.dropLast(1) || BOOK_EXTENSIONS.any { name.endsWith(it, ignoreCase = true) } ->
                             found += mapOf(
                                 "uri" to DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(),
                                 "name" to name,
@@ -181,8 +200,29 @@ class LibraryChannel(
     }
 }
 
+/** What the file pickers offer and folder scans pick up: EPUB, PDF and comic archives. */
+private val BOOK_TYPES = arrayOf(
+    "application/epub+zip",
+    "application/pdf",
+    "application/vnd.comicbook+zip",
+    "application/x-cbz",
+    "application/octet-stream",
+)
+private val BOOK_EXTENSIONS = listOf(".epub", ".pdf", ".cbz")
+
 /**
- * Copies a book into app storage as `library/<sha256>.epub` and reads what the library shows:
+ * The extension for a book file, from its first bytes (names and labels can't be trusted):
+ * "pdf", "epub" (a zip whose first entry says it's an EPUB) or "cbz" (any other zip).
+ */
+internal fun bookExtension(head: ByteArray): String? = when {
+    head.size >= 4 && String(head, 0, 4, Charsets.ISO_8859_1) == "%PDF" -> "pdf"
+    head.size >= 4 && head[0] == 'P'.code.toByte() && head[1] == 'K'.code.toByte() ->
+        if (String(head, Charsets.ISO_8859_1).contains("mimetypeapplication/epub+zip")) "epub" else "cbz"
+    else -> null
+}
+
+/**
+ * Copies a book into app storage as `library/<sha256>.<epub|pdf|cbz>` and reads what the library shows:
  * title, authors, language, description, series, and the cover (saved as
  * `covers/<sha256>.jpg`, with a tint color picked from it).
  */
@@ -196,7 +236,7 @@ class BookImporter(
     private val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
 
     suspend fun import(uri: Uri): Map<String, Any?> = withContext(Dispatchers.IO) {
-        val temp = File(staging, "import-${UUID.randomUUID()}.epub")
+        val temp = File(staging, "import-${UUID.randomUUID()}")
         val digest = MessageDigest.getInstance("SHA-256")
         val size = try {
             val input = resolver.openInputStream(uri) ?: throw IllegalStateException("Can't read $uri")
@@ -220,7 +260,12 @@ class BookImporter(
         }
 
         val id = digest.digest().joinToString("") { "%02x".format(it) }
-        val target = File(libraryDir, "$id.epub")
+        val head = ByteArray(64).let { buffer -> buffer.copyOf(temp.inputStream().use { it.read(buffer) }.coerceAtLeast(0)) }
+        val extension = bookExtension(head) ?: run {
+            temp.delete()
+            throw OpenPublicationException("Not a book this app can open")
+        }
+        val target = File(libraryDir, "$id.$extension")
         if (target.exists()) temp.delete() else if (!temp.renameTo(target)) {
             temp.copyTo(target, overwrite = true)
             temp.delete()

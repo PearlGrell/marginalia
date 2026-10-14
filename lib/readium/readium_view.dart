@@ -30,6 +30,7 @@ class ReadiumView extends StatelessWidget {
     this.onSelectionActive,
     this.onFootnote,
     this.selecting = false,
+    this.nativeGestures = false,
   });
 
   final String publicationId;
@@ -57,6 +58,9 @@ class ReadiumView extends StatelessWidget {
   /// never taken for a page turn.
   final bool selecting;
 
+  /// Every gesture goes to the page view (PDF and comics scroll, swipe and zoom themselves).
+  final bool nativeGestures;
+
   @override
   Widget build(BuildContext context) {
     return AndroidView(
@@ -68,7 +72,7 @@ class ReadiumView extends StatelessWidget {
         'preferences': preferences,
       },
       creationParamsCodec: const StandardMessageCodec(),
-      gestureRecognizers: selecting
+      gestureRecognizers: selecting || nativeGestures
           ? {Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new)}
           : {
               Factory<LongPressGestureRecognizer>(LongPressGestureRecognizer.new),

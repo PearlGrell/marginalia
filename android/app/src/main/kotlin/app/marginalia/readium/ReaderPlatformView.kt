@@ -8,7 +8,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
 import android.widget.FrameLayout
+import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
+import androidx.fragment.app.FragmentFactory
 import androidx.fragment.app.commitNow
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -30,6 +32,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.readium.r2.navigator.DecorableNavigator
 import org.readium.r2.navigator.HyperlinkNavigator
+import org.readium.r2.navigator.OverflowableNavigator
+import org.readium.r2.navigator.image.ImageNavigatorFragment
+import org.readium.r2.navigator.pdf.PdfNavigatorFactory
+import org.readium.r2.navigator.pdf.PdfNavigatorFragment
+import org.readium.adapter.pdfium.navigator.PdfiumEngineProvider
+import org.readium.adapter.pdfium.navigator.PdfiumPreferences
+import org.readium.r2.navigator.preferences.Fit
 import org.readium.r2.navigator.Decoration
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
@@ -46,7 +55,11 @@ import org.readium.r2.shared.publication.services.search.search
 import org.readium.r2.shared.util.AbsoluteUrl
 
 /**
- * One Readium [EpubNavigatorFragment] shown inside a Flutter platform view.
+ * One Readium navigator shown inside a Flutter platform view: an [EpubNavigatorFragment] for
+ * EPUB, Readium's PDF navigator (PDFium) for PDF, and its image navigator for comics. Turning,
+ * going to a place, the position and snapshots work for all three; what needs the text
+ * (highlights, the spoken sentence, search, the line under a tap, translations, selection)
+ * is EPUB's alone, and does nothing for the others.
  *
  * Dart drives it through the `marginalia/readium-view/<viewId>` channel:
  * - `goForward`, `goBackward` → bool (false at the start or end of the book). They return once
@@ -92,6 +105,10 @@ class ReaderPlatformView(
         setBackgroundColor(backgroundColor)
     }
 
+    /** The navigator, whatever the book. */
+    private var visual: OverflowableNavigator? = null
+
+    /** The EPUB navigator, for what needs the text; null for PDF and comics. */
     private var navigator: EpubNavigatorFragment? = null
     private var disposed = false
 
@@ -100,7 +117,7 @@ class ReaderPlatformView(
         // The fragment manager looks the container up by id, so it must be in the window first.
         container.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
-                if (navigator == null && !disposed) attachNavigator()
+                if (visual == null && !disposed) attachNavigator()
             }
 
             override fun onViewDetachedFromWindow(v: View) {}
@@ -110,7 +127,61 @@ class ReaderPlatformView(
     override fun getView(): View = container
 
     private fun attachNavigator() {
-        val factory = EpubNavigatorFactory(publication).createFragmentFactory(
+        val fragment = when (publication.format()) {
+            "pdf" -> instantiate(
+                PdfNavigatorFactory(publication, PdfiumEngineProvider())
+                    .createFragmentFactory(initialLocator = initialLocator, initialPreferences = PdfiumPreferences(fit = Fit.WIDTH)),
+                PdfNavigatorFragment::class.java,
+            )
+            "comic" -> instantiate(
+                ImageNavigatorFragment.createFactory(publication, initialLocator),
+                ImageNavigatorFragment::class.java,
+            )
+            else -> instantiate(epubFactory(), EpubNavigatorFragment::class.java)
+        }
+        activity.supportFragmentManager.commitNow(allowStateLoss = true) {
+            add(container.id, fragment, fragmentTag)
+        }
+        val visual = fragment as OverflowableNavigator
+        this.visual = visual
+        navigator = fragment as? EpubNavigatorFragment
+
+        visual.currentLocator
+            .onEach { channel.invokeMethod("onLocatorChanged", it.toEventMap()) }
+            .launchIn(scope)
+
+        navigator?.addDecorationListener(
+            HIGHLIGHTS,
+            object : DecorableNavigator.Listener {
+                override fun onDecorationActivated(
+                    event: DecorableNavigator.OnActivatedEvent,
+                ): Boolean {
+                    channel.invokeMethod("onHighlightTapped", mapOf("id" to event.decoration.id))
+                    return true
+                }
+            },
+        )
+
+        // Flutter hands plain taps to this view (so links work); Readium reports the ones
+        // that didn't follow a link, and Dart decides what they do (turn, show controls).
+        visual.addInputListener(object : InputListener {
+            override fun onTap(event: TapEvent): Boolean {
+                val view = fragment.view ?: return false
+                if (view.width == 0 || view.height == 0) return false
+                channel.invokeMethod(
+                    "onTap",
+                    mapOf("x" to event.point.x / view.width, "y" to event.point.y / view.height),
+                )
+                return true
+            }
+        })
+    }
+
+    private fun <T : Fragment> instantiate(factory: FragmentFactory, type: Class<T>): Fragment =
+        factory.instantiate(activity.classLoader, type.name)
+
+    private fun epubFactory(): FragmentFactory =
+        EpubNavigatorFactory(publication).createFragmentFactory(
             initialLocator = initialLocator,
             initialPreferences = preferences,
             listener = object : EpubNavigatorFragment.Listener {
@@ -143,66 +214,26 @@ class ReaderPlatformView(
                 )
             },
         )
-        val fragment = factory.instantiate(
-            activity.classLoader,
-            EpubNavigatorFragment::class.java.name,
-        ) as EpubNavigatorFragment
-
-        activity.supportFragmentManager.commitNow(allowStateLoss = true) {
-            add(container.id, fragment, fragmentTag)
-        }
-        navigator = fragment
-
-        fragment.currentLocator
-            .onEach { channel.invokeMethod("onLocatorChanged", it.toEventMap()) }
-            .launchIn(scope)
-
-        fragment.addDecorationListener(
-            HIGHLIGHTS,
-            object : DecorableNavigator.Listener {
-                override fun onDecorationActivated(
-                    event: DecorableNavigator.OnActivatedEvent,
-                ): Boolean {
-                    channel.invokeMethod("onHighlightTapped", mapOf("id" to event.decoration.id))
-                    return true
-                }
-            },
-        )
-
-        // Flutter hands plain taps to this view (so links work); Readium reports the ones
-        // that didn't follow a link, and Dart decides what they do (turn, show controls).
-        fragment.addInputListener(object : InputListener {
-            override fun onTap(event: TapEvent): Boolean {
-                val view = fragment.view ?: return false
-                if (view.width == 0 || view.height == 0) return false
-                channel.invokeMethod(
-                    "onTap",
-                    mapOf("x" to event.point.x / view.width, "y" to event.point.y / view.height),
-                )
-                return true
-            }
-        })
-    }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        val navigator = navigator
-        if (navigator == null) {
+        val visual = visual
+        if (visual == null) {
             result.error("not_ready", "The reader is not attached yet", null)
             return
         }
         when (call.method) {
-            "goForward" -> navigate(result) { navigator.goForward(animated = false) }
-            "goBackward" -> navigate(result) { navigator.goBackward(animated = false) }
+            "goForward" -> return navigate(result) { visual.goForward(animated = false) }
+            "goBackward" -> return navigate(result) { visual.goBackward(animated = false) }
             "goToLocator" -> {
                 val json = call.argument<String>("locator")
                 val locator = json?.let { Locator.fromJSON(JSONObject(it)) }
                     ?: return result.error("bad_args", "locator is invalid", null)
-                navigate(result) { navigator.go(locator, animated = false) }
+                return navigate(result) { visual.go(locator, animated = false) }
             }
             "goToHref" -> {
                 val href = call.argument<String>("href")?.let { Href(it) }
                     ?: return result.error("bad_args", "href is invalid", null)
-                navigate(result) { navigator.go(Link(href = href), animated = false) }
+                return navigate(result) { visual.go(Link(href = href), animated = false) }
             }
             "goToProgression" -> {
                 val progression = call.argument<Double>("progression")
@@ -212,10 +243,23 @@ class ReaderPlatformView(
                     if (locator == null) {
                         result.success(false)
                     } else {
-                        navigate(result) { navigator.go(locator, animated = false) }
+                        navigate(result) { visual.go(locator, animated = false) }
                     }
                 }
+                return
             }
+            "snapshot" -> return snapshot(call.argument<Double>("scale") ?: 1.0, result)
+            "search" -> return search(call.argument<String>("query")?.trim().orEmpty(), result)
+        }
+        // The rest needs the text: EPUB only.
+        val navigator = navigator ?: return result.success(
+            when (call.method) {
+                "locatorAt", "firstVisibleSentence" -> null
+                "insertTranslation" -> false
+                else -> null
+            },
+        )
+        when (call.method) {
             "setPreferences" -> {
                 @Suppress("UNCHECKED_CAST")
                 val map = call.arguments as? Map<String, Any?> ?: emptyMap()
@@ -225,7 +269,6 @@ class ReaderPlatformView(
                 navigator.submitPreferences(preferences)
                 result.success(null)
             }
-            "snapshot" -> snapshot(call.argument<Double>("scale") ?: 1.0, result)
             "setSpokenSentence" -> {
                 // While reading aloud: mark the sentence and keep it on screen.
                 val locator = call.argument<String>("locator")?.let { Locator.fromJSON(JSONObject(it)) }
@@ -242,25 +285,6 @@ class ReaderPlatformView(
                     )
                     if (locator != null && follow) keepInView(navigator, locator)
                     result.success(null)
-                }
-            }
-            "search" -> {
-                val query = call.argument<String>("query")?.trim().orEmpty()
-                if (query.isEmpty()) return result.success(emptyList<Any>())
-                scope.launch {
-                    val iterator = publication.search(query)
-                        ?: return@launch result.success(emptyList<Any>())
-                    val found = mutableListOf<Map<String, Any?>>()
-                    try {
-                        while (found.size < MAX_SEARCH_RESULTS) {
-                            val page = iterator.next().getOrNull() ?: break
-                            if (page.locators.isEmpty()) break
-                            page.locators.forEach { found += it.toSearchMap() }
-                        }
-                    } finally {
-                        iterator.close()
-                    }
-                    result.success(found.take(MAX_SEARCH_RESULTS))
                 }
             }
             "markSearchResult" -> {
@@ -436,12 +460,32 @@ class ReaderPlatformView(
         }
     }
 
+    /** Every place [query] appears in the book (as far as the book can be searched). */
+    private fun search(query: String, result: MethodChannel.Result) {
+        if (query.isEmpty()) return result.success(emptyList<Any>())
+        scope.launch {
+            val iterator = publication.search(query)
+                ?: return@launch result.success(emptyList<Any>())
+            val found = mutableListOf<Map<String, Any?>>()
+            try {
+                while (found.size < MAX_SEARCH_RESULTS) {
+                    val page = iterator.next().getOrNull() ?: break
+                    if (page.locators.isEmpty()) break
+                    page.locators.forEach { found += it.toSearchMap() }
+                }
+            } finally {
+                iterator.close()
+            }
+            result.success(found.take(MAX_SEARCH_RESULTS))
+        }
+    }
+
     /**
      * Runs a navigation, then waits until the new page is reported and drawn, so a snapshot
      * taken right after shows it.
      */
     private fun navigate(result: MethodChannel.Result, go: suspend () -> Boolean) {
-        val navigator = navigator ?: return result.success(false)
+        val navigator = visual ?: return result.success(false)
         scope.launch {
             val before = navigator.currentLocator.value
             // Readium's goForward/goBackward report true even at the end or start of the book,
@@ -455,7 +499,7 @@ class ReaderPlatformView(
     }
 
     private fun snapshot(scale: Double, result: MethodChannel.Result) {
-        val view = navigator?.view ?: container
+        val view = (visual as? Fragment)?.view ?: container
         val width = (view.width * scale).toInt()
         val height = (view.height * scale).toInt()
         if (width <= 0 || height <= 0) {
@@ -486,6 +530,7 @@ class ReaderPlatformView(
         if (fragment != null && !activity.isDestroyed) {
             activity.supportFragmentManager.commitNow(allowStateLoss = true) { remove(fragment) }
         }
+        visual = null
         navigator = null
     }
 

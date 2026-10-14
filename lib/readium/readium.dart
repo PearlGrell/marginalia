@@ -38,6 +38,7 @@ class PublicationInfo {
     required this.isRightToLeft,
     required this.toc,
     required this.chapters,
+    this.format = 'epub',
   });
 
   factory PublicationInfo.fromMap(Map<String, Object?> map) => PublicationInfo(
@@ -47,6 +48,7 @@ class PublicationInfo {
     language: map['language'] as String?,
     isRightToLeft: map['readingProgression'] == 'rtl',
     toc: _tocFromList(map['toc']),
+    format: map['format'] as String? ?? 'epub',
     chapters: [
       for (final c in (map['chapters'] as List?) ?? const [])
         if (c is Map)
@@ -68,6 +70,13 @@ class PublicationInfo {
 
   /// Readium positions per reading-order chapter.
   final List<ChapterPositions> chapters;
+
+  /// "epub", "pdf" or "comic".
+  final String format;
+
+  /// Pages laid out once and for all (PDF, comics): no text to restyle, select, read aloud
+  /// or search, and the page view handles its own swipes and zoom.
+  bool get isFixedLayout => format != 'epub';
 
   ChapterPositions? chapterFor(String href) {
     final path = href.split('#').first;

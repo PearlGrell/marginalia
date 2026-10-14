@@ -303,6 +303,7 @@ class SyncEngine {
     if (b.driveCoverId != null) 'driveCoverId': b.driveCoverId,
     'coverColor': b.coverColor,
     'fileSize': b.fileSize,
+    'format': b.format,
     'source': b.source.name,
     'sourceId': b.sourceId,
     'series': b.series,
@@ -407,6 +408,7 @@ class SyncEngine {
           ),
           coverColor: Value((m['coverColor'] as num?)?.toInt()),
           fileSize: Value((m['fileSize'] as num?)?.toInt() ?? 0),
+          format: Value(m['format'] as String? ?? local?.format ?? 'epub'),
           source: Value(BookSource.values.where((s) => s.name == m['source']).firstOrNull ?? BookSource.import),
           sourceId: Value(m['sourceId'] as String?),
           series: Value(m['series'] as String?),
@@ -723,7 +725,7 @@ class SyncEngine {
         report.uploadSkip = skip;
         continue;
       }
-      final fileId = await drive.upload(file, '${b.id}.epub', 'application/epub+zip');
+      final fileId = await drive.upload(file, '${b.id}.${b.format}', bookMimeType(b.format));
       String? coverId;
       if (b.coverPath case final cover? when await File(cover).exists()) {
         coverId = await drive.upload(File(cover), '${b.id}.jpg', 'image/jpeg');

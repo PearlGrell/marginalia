@@ -12,6 +12,7 @@ void main() {
     sortTitle: id,
     sortAuthor: 's',
     fileSize: 0,
+    format: 'epub',
     source: BookSource.import,
     tags: const [],
     ratingHalves: 0,

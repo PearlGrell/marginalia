@@ -14,12 +14,13 @@ import org.readium.r2.shared.util.http.DefaultHttpClient
 import org.readium.r2.shared.util.toUrl
 import org.readium.r2.streamer.PublicationOpener
 import org.readium.r2.streamer.parser.DefaultPublicationParser
+import org.readium.adapter.pdfium.document.PdfiumDocumentFactory
 
 class OpenPublicationException(message: String) : Exception(message)
 
 /**
- * Opens EPUB files with Readium and keeps them in memory, keyed by an id the Dart side holds,
- * until Dart closes them.
+ * Opens books with Readium (EPUB, PDF, and comics: CBZ and other image archives) and keeps
+ * them in memory, keyed by an id the Dart side holds, until Dart closes them.
  */
 class PublicationRepository(context: Context) {
 
@@ -30,7 +31,7 @@ class PublicationRepository(context: Context) {
             context,
             httpClient = httpClient,
             assetRetriever = assetRetriever,
-            pdfFactory = null,
+            pdfFactory = PdfiumDocumentFactory(context.applicationContext),
         ),
     )
 
@@ -60,9 +61,9 @@ class PublicationRepository(context: Context) {
                 asset.close()
                 throw OpenPublicationException("Can't open publication: ${it.message}")
             }
-        if (!publication.conformsTo(Publication.Profile.EPUB)) {
+        if (publication.format() == null) {
             publication.close()
-            throw OpenPublicationException("Not an EPUB publication")
+            throw OpenPublicationException("Not a book this app can open")
         }
 
         val id = UUID.randomUUID().toString()
@@ -82,10 +83,19 @@ class PublicationRepository(context: Context) {
     }
 }
 
+/** "epub", "pdf" or "comic" (pages of images, like CBZ); null for anything else. */
+fun Publication.format(): String? = when {
+    conformsTo(Publication.Profile.EPUB) -> "epub"
+    conformsTo(Publication.Profile.PDF) -> "pdf"
+    conformsTo(Publication.Profile.DIVINA) -> "comic"
+    else -> null
+}
+
 /** Summary of an opened publication, sent to Dart. */
 @OptIn(ExperimentalReadiumApi::class)
 fun Publication.toSummaryMap(id: String): Map<String, Any?> = mapOf(
     "id" to id,
+    "format" to format(),
     "title" to metadata.title,
     "authors" to metadata.authors.map { it.name },
     "language" to metadata.languages.firstOrNull(),
