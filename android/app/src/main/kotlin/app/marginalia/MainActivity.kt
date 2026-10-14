@@ -27,6 +27,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var libraryChannel: LibraryChannel? = null
     private var listenChannel: ListenChannel? = null
     private var voicesChannel: VoicesChannel? = null
+    private var companionChannel: CompanionChannel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Reader fragments are hosted inside Flutter platform views, which do not survive
@@ -88,6 +89,7 @@ class MainActivity : FlutterFragmentActivity() {
         deliverPendingFile()
         listenChannel = ListenChannel(messenger, this, repository)
         voicesChannel = VoicesChannel(messenger, this)
+        companionChannel = CompanionChannel(messenger)
         flutterEngine.platformViewsController.registry.registerViewFactory(
             ReaderViewFactory.VIEW_TYPE,
             ReaderViewFactory(this, messenger, repository),
@@ -108,6 +110,8 @@ class MainActivity : FlutterFragmentActivity() {
         listenChannel = null
         voicesChannel?.dispose()
         voicesChannel = null
+        companionChannel?.dispose()
+        companionChannel = null
         repository.closeAll()
         super.cleanUpFlutterEngine(flutterEngine)
     }

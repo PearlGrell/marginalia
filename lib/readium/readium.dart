@@ -18,6 +18,24 @@ class Readium {
 
   Future<void> close(String publicationId) =>
       _channel.invokeMethod('close', {'id': publicationId});
+
+  /// The book's paragraphs from its start up to [locatorJson] (never past it), keeping the
+  /// last [maxChars] of text, with each one's chapter (reading-order index).
+  Future<List<({int chapter, String text})>> textUpTo(
+    String publicationId,
+    String locatorJson, {
+    int maxChars = 400000,
+  }) async {
+    final list = await _channel.invokeListMethod<Map<Object?, Object?>>('textUpTo', {
+      'id': publicationId,
+      'locator': locatorJson,
+      'maxChars': maxChars,
+    });
+    return [
+      for (final m in list ?? const <Map<Object?, Object?>>[])
+        (chapter: (m['chapter']! as num).toInt(), text: m['text']! as String),
+    ];
+  }
 }
 
 class ReadiumException implements Exception {

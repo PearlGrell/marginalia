@@ -20,6 +20,7 @@ class SelectionMenu(
         "note" to "Note",
         "share" to "Share",
         "define" to "Define",
+        "who" to "Who's this?",
         "translate" to "Translate",
         "copy" to "Copy",
     )

@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../cloud/sync_service.dart';
+import '../companion/companion_sheet.dart';
 import '../data/database.dart';
 import '../data/library.dart';
 import '../readium/readium.dart';
@@ -413,6 +414,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       case 'note':
         final id = await store.addHighlight(widget.bookId, selection);
         await _editAnnotation(id, editNote: true);
+      case 'who':
+        final name = selection.text?.trim() ?? '';
+        if (name.isNotEmpty && mounted) await _ask(name: name);
       case 'define':
         final word = selection.text?.trim() ?? '';
         if (word.isNotEmpty && mounted) {
@@ -645,6 +649,21 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       return;
     }
     _pageTurner.currentState?.tapAt(point.dx, y: point.dy);
+  }
+
+  /// Who someone is, or a recap: from the book up to this page.
+  Future<void> _ask({String? name}) async {
+    final publication = _publication;
+    final locator = _location?.locatorJson;
+    if (publication == null || locator == null) return;
+    if (_chromeVisible) _toggleChrome();
+    await showCompanionSheet(
+      context,
+      publicationId: publication.id,
+      locatorJson: locator,
+      title: _book?.title ?? publication.title,
+      name: name,
+    );
   }
 
   Future<void> _startListening() async {
@@ -1099,6 +1118,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                         color: theme.ink,
                         onPressed: () => showDisplaySheet(context, coverColor: _coverColor),
                       ),
+                      if (!(_publication?.isFixedLayout ?? false))
+                        _ChromeButton(
+                          icon: Icons.auto_awesome_outlined,
+                          label: 'Ask',
+                          color: theme.ink,
+                          onPressed: () => _ask(),
+                        ),
                       if (!(_publication?.isFixedLayout ?? false))
                         _ChromeButton(
                           icon: Icons.headphones_outlined,
