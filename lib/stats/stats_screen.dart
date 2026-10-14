@@ -107,7 +107,7 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
               childAspectRatio: 1.55,
               children: [
                 _Figure(value: formatDuration(stats.seconds), label: 'reading', icon: Icons.schedule),
-                _Figure(value: '${stats.pages}', label: stats.pages == 1 ? 'page turned' : 'pages turned', icon: Icons.auto_stories_outlined),
+                _Figure(value: '${stats.pages}', label: stats.pages == 1 ? 'page read' : 'pages read', icon: Icons.auto_stories_outlined),
                 _Figure(
                   value: '${stats.currentStreak} ${stats.currentStreak == 1 ? 'day' : 'days'}',
                   label: 'streak now · best ${stats.bestStreak}',
@@ -148,8 +148,12 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
                   subtitle: Text(
                     [
                       formatDuration(stats.perBook[id]!),
+                      if (stats.pagesPerBook[id] case final pages? when pages > 0) '$pages ${pages == 1 ? 'page' : 'pages'}',
+                      if (stats.rangesPerBook[id] case final ranges? when ranges.isNotEmpty) pageRanges(ranges),
                       if (stats.finished.any((b) => b.id == id)) 'finished',
                     ].join(' · '),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   onTap: () => context.push('/book/$id'),
                 ),

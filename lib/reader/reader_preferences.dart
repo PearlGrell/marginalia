@@ -76,6 +76,7 @@ class ReaderPreferences {
     this.tapToTurn = true,
     this.volumeKeys = false,
     this.keepScreenOn = false,
+    this.showClock = true,
   });
 
   static const defaultCustomPage = 0xFFE6ECE2;
@@ -124,6 +125,9 @@ class ReaderPreferences {
   final bool tapToTurn;
   final bool volumeKeys;
   final bool keepScreenOn;
+
+  /// The time, above the page.
+  final bool showClock;
 
   static const minFontScale = 0.75;
   static const maxFontScale = 2.5;
@@ -191,6 +195,7 @@ class ReaderPreferences {
     bool? tapToTurn,
     bool? volumeKeys,
     bool? keepScreenOn,
+    bool? showClock,
   }) => ReaderPreferences(
     pageMode: pageMode ?? this.pageMode,
     lightTheme: lightTheme ?? this.lightTheme,
@@ -213,6 +218,7 @@ class ReaderPreferences {
     tapToTurn: tapToTurn ?? this.tapToTurn,
     volumeKeys: volumeKeys ?? this.volumeKeys,
     keepScreenOn: keepScreenOn ?? this.keepScreenOn,
+    showClock: showClock ?? this.showClock,
   );
 
   /// What Readium renders (see `PreferencesMapper.kt`), for the page colors in effect.
@@ -258,6 +264,7 @@ class ReaderPreferences {
     'tapToTurn': tapToTurn,
     'volumeKeys': volumeKeys,
     'keepScreenOn': keepScreenOn,
+    'showClock': showClock,
   };
 
   factory ReaderPreferences.fromJson(Map<String, Object?> json) {
@@ -287,6 +294,7 @@ class ReaderPreferences {
       tapToTurn: json['tapToTurn'] as bool?,
       volumeKeys: json['volumeKeys'] as bool?,
       keepScreenOn: json['keepScreenOn'] as bool?,
+      showClock: json['showClock'] as bool?,
     );
   }
 }

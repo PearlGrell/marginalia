@@ -32,6 +32,7 @@ void main() {
         tapToTurn: false,
         volumeKeys: true,
         keepScreenOn: true,
+        showClock: false,
       );
       final restored = ReaderPreferences.fromJson(prefs.toJson());
       expect(restored.toJson(), prefs.toJson());

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' show Random;
 import 'dart:ui' as ui;
 
 import 'package:drift/drift.dart' show Value;
@@ -293,6 +292,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       DateTime.now(),
       advanced: previous == null || location.position == null ? 0 : location.position! - previous,
       progress: location.totalProgression,
+      position: location.position,
     );
     _learnPace(location.position);
     setState(() => _location = location);
@@ -313,6 +313,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       bookId: widget.bookId,
       now: DateTime.now(),
       progress: _location?.totalProgression ?? _book?.progress,
+      position: _location?.position,
     );
   }
 
@@ -322,7 +323,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (session == null) return;
     final record = session.finish(
       DateTime.now(),
-      id: '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}${Random().nextInt(1 << 20).toRadixString(36)}',
       deviceName: ref.read(localStoreProvider).readJson('device.name') as String?,
     );
     if (record != null) _db.saveSession(record);
@@ -369,6 +369,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Future<void> _onSelection(Map<Object?, Object?> raw) async {
     final selection = ReaderSelection.fromMap(raw);
     final store = ref.read(annotationStoreProvider);
+    // Picking an action ends the selection, even if the page never said so: otherwise the
+    // page keeps every touch once the sheet for the action closes.
+    if (_selecting) setState(() => _selecting = false);
     switch (selection.action) {
       case 'copy':
         await Clipboard.setData(ClipboardData(text: selection.text ?? ''));
@@ -620,7 +623,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         return;
       }
     }
-    _pageTurner.currentState?.tapAt(point.dx);
+    _pageTurner.currentState?.tapAt(point.dx, y: point.dy);
   }
 
   Future<void> _startListening() async {
@@ -692,6 +695,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             children: [
               Column(
                 children: [
+                  if (_publication != null && prefs.showClock) _buildHeader(theme),
                   Expanded(child: _buildPages(prefs, theme, readium)),
                   if (listening) PlayerBar(theme: theme),
                   if (_publication != null) _buildFooter(theme),
@@ -816,6 +820,26 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// The time, quiet above the page (the system bars stay hidden while reading).
+  Widget _buildHeader(PageColors theme) {
+    return SafeArea(
+      bottom: false,
+      child: SizedBox(
+        height: 26,
+        child: Center(
+          child: _Clock(
+            style: TextStyle(
+              fontFamily: FontFamilies.ui,
+              fontSize: 11.5,
+              color: theme.muted,
+              fontFeatures: const [ui.FontFeature.tabularFigures()],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1158,5 +1182,50 @@ class _ChromeButton extends StatelessWidget {
       label: Text(label),
       style: TextButton.styleFrom(foregroundColor: color),
     );
+  }
+}
+
+/// The time of day, in the device's 12 or 24 hour style, changing on the minute.
+class _Clock extends StatefulWidget {
+  const _Clock({required this.style});
+
+  final TextStyle style;
+
+  @override
+  State<_Clock> createState() => _ClockState();
+}
+
+class _ClockState extends State<_Clock> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleTick();
+  }
+
+  void _scheduleTick() {
+    final now = DateTime.now();
+    final nextMinute = DateTime(now.year, now.month, now.day, now.hour, now.minute + 1);
+    _timer = Timer(nextMinute.difference(now), () {
+      if (!mounted) return;
+      setState(() {});
+      _scheduleTick();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final time = MaterialLocalizations.of(context).formatTimeOfDay(
+      TimeOfDay.now(),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+    );
+    return Text(time, style: widget.style, maxLines: 1);
   }
 }

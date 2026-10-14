@@ -3477,6 +3477,28 @@ class $ReadingSessionsTable extends ReadingSessions
     type: DriftSqlType.double,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _startPositionMeta = const VerificationMeta(
+    'startPosition',
+  );
+  @override
+  late final GeneratedColumn<int> startPosition = GeneratedColumn<int>(
+    'start_position',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _endPositionMeta = const VerificationMeta(
+    'endPosition',
+  );
+  @override
+  late final GeneratedColumn<int> endPosition = GeneratedColumn<int>(
+    'end_position',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
   );
@@ -3527,6 +3549,8 @@ class $ReadingSessionsTable extends ReadingSessions
     pages,
     startProgress,
     endProgress,
+    startPosition,
+    endPosition,
     updatedAt,
     deleted,
     dirty,
@@ -3610,6 +3634,24 @@ class $ReadingSessionsTable extends ReadingSessions
         ),
       );
     }
+    if (data.containsKey('start_position')) {
+      context.handle(
+        _startPositionMeta,
+        startPosition.isAcceptableOrUnknown(
+          data['start_position']!,
+          _startPositionMeta,
+        ),
+      );
+    }
+    if (data.containsKey('end_position')) {
+      context.handle(
+        _endPositionMeta,
+        endPosition.isAcceptableOrUnknown(
+          data['end_position']!,
+          _endPositionMeta,
+        ),
+      );
+    }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
@@ -3675,6 +3717,14 @@ class $ReadingSessionsTable extends ReadingSessions
         DriftSqlType.double,
         data['${effectivePrefix}end_progress'],
       ),
+      startPosition: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}start_position'],
+      ),
+      endPosition: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}end_position'],
+      ),
       updatedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
@@ -3710,6 +3760,11 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
   final int pages;
   final double? startProgress;
   final double? endProgress;
+
+  /// Readium positions (about a page each) where the sitting began and ended; null for
+  /// sittings recorded before they were kept.
+  final int? startPosition;
+  final int? endPosition;
   final DateTime updatedAt;
   final bool deleted;
   final bool dirty;
@@ -3723,6 +3778,8 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
     required this.pages,
     this.startProgress,
     this.endProgress,
+    this.startPosition,
+    this.endPosition,
     required this.updatedAt,
     required this.deleted,
     required this.dirty,
@@ -3744,6 +3801,12 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
     }
     if (!nullToAbsent || endProgress != null) {
       map['end_progress'] = Variable<double>(endProgress);
+    }
+    if (!nullToAbsent || startPosition != null) {
+      map['start_position'] = Variable<int>(startPosition);
+    }
+    if (!nullToAbsent || endPosition != null) {
+      map['end_position'] = Variable<int>(endPosition);
     }
     map['updated_at'] = Variable<DateTime>(updatedAt);
     map['deleted'] = Variable<bool>(deleted);
@@ -3768,6 +3831,12 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
       endProgress: endProgress == null && nullToAbsent
           ? const Value.absent()
           : Value(endProgress),
+      startPosition: startPosition == null && nullToAbsent
+          ? const Value.absent()
+          : Value(startPosition),
+      endPosition: endPosition == null && nullToAbsent
+          ? const Value.absent()
+          : Value(endPosition),
       updatedAt: Value(updatedAt),
       deleted: Value(deleted),
       dirty: Value(dirty),
@@ -3789,6 +3858,8 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
       pages: serializer.fromJson<int>(json['pages']),
       startProgress: serializer.fromJson<double?>(json['startProgress']),
       endProgress: serializer.fromJson<double?>(json['endProgress']),
+      startPosition: serializer.fromJson<int?>(json['startPosition']),
+      endPosition: serializer.fromJson<int?>(json['endPosition']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       deleted: serializer.fromJson<bool>(json['deleted']),
       dirty: serializer.fromJson<bool>(json['dirty']),
@@ -3807,6 +3878,8 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
       'pages': serializer.toJson<int>(pages),
       'startProgress': serializer.toJson<double?>(startProgress),
       'endProgress': serializer.toJson<double?>(endProgress),
+      'startPosition': serializer.toJson<int?>(startPosition),
+      'endPosition': serializer.toJson<int?>(endPosition),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'deleted': serializer.toJson<bool>(deleted),
       'dirty': serializer.toJson<bool>(dirty),
@@ -3823,6 +3896,8 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
     int? pages,
     Value<double?> startProgress = const Value.absent(),
     Value<double?> endProgress = const Value.absent(),
+    Value<int?> startPosition = const Value.absent(),
+    Value<int?> endPosition = const Value.absent(),
     DateTime? updatedAt,
     bool? deleted,
     bool? dirty,
@@ -3838,6 +3913,10 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
         ? startProgress.value
         : this.startProgress,
     endProgress: endProgress.present ? endProgress.value : this.endProgress,
+    startPosition: startPosition.present
+        ? startPosition.value
+        : this.startPosition,
+    endPosition: endPosition.present ? endPosition.value : this.endPosition,
     updatedAt: updatedAt ?? this.updatedAt,
     deleted: deleted ?? this.deleted,
     dirty: dirty ?? this.dirty,
@@ -3859,6 +3938,12 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
       endProgress: data.endProgress.present
           ? data.endProgress.value
           : this.endProgress,
+      startPosition: data.startPosition.present
+          ? data.startPosition.value
+          : this.startPosition,
+      endPosition: data.endPosition.present
+          ? data.endPosition.value
+          : this.endPosition,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       deleted: data.deleted.present ? data.deleted.value : this.deleted,
       dirty: data.dirty.present ? data.dirty.value : this.dirty,
@@ -3877,6 +3962,8 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
           ..write('pages: $pages, ')
           ..write('startProgress: $startProgress, ')
           ..write('endProgress: $endProgress, ')
+          ..write('startPosition: $startPosition, ')
+          ..write('endPosition: $endPosition, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('deleted: $deleted, ')
           ..write('dirty: $dirty')
@@ -3895,6 +3982,8 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
     pages,
     startProgress,
     endProgress,
+    startPosition,
+    endPosition,
     updatedAt,
     deleted,
     dirty,
@@ -3912,6 +4001,8 @@ class ReadingSession extends DataClass implements Insertable<ReadingSession> {
           other.pages == this.pages &&
           other.startProgress == this.startProgress &&
           other.endProgress == this.endProgress &&
+          other.startPosition == this.startPosition &&
+          other.endPosition == this.endPosition &&
           other.updatedAt == this.updatedAt &&
           other.deleted == this.deleted &&
           other.dirty == this.dirty);
@@ -3927,6 +4018,8 @@ class ReadingSessionsCompanion extends UpdateCompanion<ReadingSession> {
   final Value<int> pages;
   final Value<double?> startProgress;
   final Value<double?> endProgress;
+  final Value<int?> startPosition;
+  final Value<int?> endPosition;
   final Value<DateTime> updatedAt;
   final Value<bool> deleted;
   final Value<bool> dirty;
@@ -3941,6 +4034,8 @@ class ReadingSessionsCompanion extends UpdateCompanion<ReadingSession> {
     this.pages = const Value.absent(),
     this.startProgress = const Value.absent(),
     this.endProgress = const Value.absent(),
+    this.startPosition = const Value.absent(),
+    this.endPosition = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.deleted = const Value.absent(),
     this.dirty = const Value.absent(),
@@ -3956,6 +4051,8 @@ class ReadingSessionsCompanion extends UpdateCompanion<ReadingSession> {
     this.pages = const Value.absent(),
     this.startProgress = const Value.absent(),
     this.endProgress = const Value.absent(),
+    this.startPosition = const Value.absent(),
+    this.endPosition = const Value.absent(),
     required DateTime updatedAt,
     this.deleted = const Value.absent(),
     this.dirty = const Value.absent(),
@@ -3976,6 +4073,8 @@ class ReadingSessionsCompanion extends UpdateCompanion<ReadingSession> {
     Expression<int>? pages,
     Expression<double>? startProgress,
     Expression<double>? endProgress,
+    Expression<int>? startPosition,
+    Expression<int>? endPosition,
     Expression<DateTime>? updatedAt,
     Expression<bool>? deleted,
     Expression<bool>? dirty,
@@ -3991,6 +4090,8 @@ class ReadingSessionsCompanion extends UpdateCompanion<ReadingSession> {
       if (pages != null) 'pages': pages,
       if (startProgress != null) 'start_progress': startProgress,
       if (endProgress != null) 'end_progress': endProgress,
+      if (startPosition != null) 'start_position': startPosition,
+      if (endPosition != null) 'end_position': endPosition,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (deleted != null) 'deleted': deleted,
       if (dirty != null) 'dirty': dirty,
@@ -4008,6 +4109,8 @@ class ReadingSessionsCompanion extends UpdateCompanion<ReadingSession> {
     Value<int>? pages,
     Value<double?>? startProgress,
     Value<double?>? endProgress,
+    Value<int?>? startPosition,
+    Value<int?>? endPosition,
     Value<DateTime>? updatedAt,
     Value<bool>? deleted,
     Value<bool>? dirty,
@@ -4023,6 +4126,8 @@ class ReadingSessionsCompanion extends UpdateCompanion<ReadingSession> {
       pages: pages ?? this.pages,
       startProgress: startProgress ?? this.startProgress,
       endProgress: endProgress ?? this.endProgress,
+      startPosition: startPosition ?? this.startPosition,
+      endPosition: endPosition ?? this.endPosition,
       updatedAt: updatedAt ?? this.updatedAt,
       deleted: deleted ?? this.deleted,
       dirty: dirty ?? this.dirty,
@@ -4060,6 +4165,12 @@ class ReadingSessionsCompanion extends UpdateCompanion<ReadingSession> {
     if (endProgress.present) {
       map['end_progress'] = Variable<double>(endProgress.value);
     }
+    if (startPosition.present) {
+      map['start_position'] = Variable<int>(startPosition.value);
+    }
+    if (endPosition.present) {
+      map['end_position'] = Variable<int>(endPosition.value);
+    }
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
@@ -4087,6 +4198,8 @@ class ReadingSessionsCompanion extends UpdateCompanion<ReadingSession> {
           ..write('pages: $pages, ')
           ..write('startProgress: $startProgress, ')
           ..write('endProgress: $endProgress, ')
+          ..write('startPosition: $startPosition, ')
+          ..write('endPosition: $endPosition, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('deleted: $deleted, ')
           ..write('dirty: $dirty, ')
@@ -7205,6 +7318,8 @@ typedef $$ReadingSessionsTableCreateCompanionBuilder =
       Value<int> pages,
       Value<double?> startProgress,
       Value<double?> endProgress,
+      Value<int?> startPosition,
+      Value<int?> endPosition,
       required DateTime updatedAt,
       Value<bool> deleted,
       Value<bool> dirty,
@@ -7221,6 +7336,8 @@ typedef $$ReadingSessionsTableUpdateCompanionBuilder =
       Value<int> pages,
       Value<double?> startProgress,
       Value<double?> endProgress,
+      Value<int?> startPosition,
+      Value<int?> endPosition,
       Value<DateTime> updatedAt,
       Value<bool> deleted,
       Value<bool> dirty,
@@ -7278,6 +7395,16 @@ class $$ReadingSessionsTableFilterComposer
 
   ColumnFilters<double> get endProgress => $composableBuilder(
     column: $table.endProgress,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get startPosition => $composableBuilder(
+    column: $table.startPosition,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get endPosition => $composableBuilder(
+    column: $table.endPosition,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -7351,6 +7478,16 @@ class $$ReadingSessionsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get startPosition => $composableBuilder(
+    column: $table.startPosition,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get endPosition => $composableBuilder(
+    column: $table.endPosition,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
     builder: (column) => ColumnOrderings(column),
@@ -7406,6 +7543,16 @@ class $$ReadingSessionsTableAnnotationComposer
 
   GeneratedColumn<double> get endProgress => $composableBuilder(
     column: $table.endProgress,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get startPosition => $composableBuilder(
+    column: $table.startPosition,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get endPosition => $composableBuilder(
+    column: $table.endPosition,
     builder: (column) => column,
   );
 
@@ -7465,6 +7612,8 @@ class $$ReadingSessionsTableTableManager
                 Value<int> pages = const Value.absent(),
                 Value<double?> startProgress = const Value.absent(),
                 Value<double?> endProgress = const Value.absent(),
+                Value<int?> startPosition = const Value.absent(),
+                Value<int?> endPosition = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> deleted = const Value.absent(),
                 Value<bool> dirty = const Value.absent(),
@@ -7479,6 +7628,8 @@ class $$ReadingSessionsTableTableManager
                 pages: pages,
                 startProgress: startProgress,
                 endProgress: endProgress,
+                startPosition: startPosition,
+                endPosition: endPosition,
                 updatedAt: updatedAt,
                 deleted: deleted,
                 dirty: dirty,
@@ -7495,6 +7646,8 @@ class $$ReadingSessionsTableTableManager
                 Value<int> pages = const Value.absent(),
                 Value<double?> startProgress = const Value.absent(),
                 Value<double?> endProgress = const Value.absent(),
+                Value<int?> startPosition = const Value.absent(),
+                Value<int?> endPosition = const Value.absent(),
                 required DateTime updatedAt,
                 Value<bool> deleted = const Value.absent(),
                 Value<bool> dirty = const Value.absent(),
@@ -7509,6 +7662,8 @@ class $$ReadingSessionsTableTableManager
                 pages: pages,
                 startProgress: startProgress,
                 endProgress: endProgress,
+                startPosition: startPosition,
+                endPosition: endPosition,
                 updatedAt: updatedAt,
                 deleted: deleted,
                 dirty: dirty,

@@ -10,7 +10,8 @@ import '../words/word_store.dart';
 
 /// Meanings of [word], from the downloaded dictionary for the book's [language]: English
 /// (WordNet), or another language into English (FreeDict). The word can be saved to the word
-/// list with the [sentence] it came from.
+/// list with the [sentence] it came from. A tap on a word in a meaning looks that word up in
+/// the same sheet; back returns to the word before.
 Future<void> showDefinitionSheet(
   BuildContext context,
   String word, {
@@ -39,6 +40,10 @@ Future<void> showDefinitionSheet(
 /// What a saved word keeps: its part of speech and a short meaning.
 typedef _Meaning = ({String lemma, String? partOfSpeech, String definition});
 
+/// A word being looked up: the one from the page, or one tapped in a meaning (with that
+/// meaning as its context, and in English when it came from an English translation).
+typedef _LookUp = ({String word, String? sentence, bool english});
+
 class _DefinitionSheet extends ConsumerStatefulWidget {
   const _DefinitionSheet({
     required this.word,
@@ -59,13 +64,37 @@ class _DefinitionSheet extends ConsumerStatefulWidget {
 }
 
 class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
-  /// Look the word up in English even though the book is in another language.
-  bool _english = false;
+  /// The words looked up, the page's first; the last is showing.
+  late final _trail = <_LookUp>[(word: widget.word, sentence: widget.sentence, english: false)];
   bool? _saved;
+
+  String get _word => _trail.last.word;
+
+  /// Look the word up in English even though the book is in another language.
+  bool get _english => _trail.last.english;
+  set _english(bool english) => _trail.last = (word: _word, sentence: _trail.last.sentence, english: english);
 
   String get _base => (widget.language ?? 'en').split(RegExp('[-_]')).first.toLowerCase();
 
   bool get _foreign => _base != 'en' && !_english;
+
+  /// The word before this one, when this one was tapped in its meaning.
+  String? get _from => _trail.length > 1 ? _trail[_trail.length - 2].word : null;
+
+  /// Looks up [word], tapped in [sentence], on top of the current word.
+  void _lookUp(String word, String sentence, {bool english = false}) {
+    if (word.toLowerCase() == _word.toLowerCase()) return;
+    setState(() {
+      _trail.add((word: word, sentence: sentence, english: english || _english));
+      _saved = null;
+    });
+    if (widget.scroll.hasClients) widget.scroll.jumpTo(0);
+  }
+
+  void _back() => setState(() {
+    _trail.removeLast();
+    _saved = null;
+  });
 
   Future<void> _checkSaved(String lemma) async {
     if (_saved != null) return;
@@ -79,7 +108,7 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
       language: _foreign ? _base : 'en',
       partOfSpeech: meaning.partOfSpeech,
       definition: meaning.definition,
-      context: widget.sentence,
+      context: _trail.last.sentence,
       bookId: widget.bookId,
     );
     if (!mounted) return;
@@ -97,11 +126,21 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
 
   @override
   Widget build(BuildContext context) {
-    if (_foreign) return _foreignSheet(context);
+    // Back goes to the word before, then closes the sheet.
+    return PopScope(
+      canPop: _trail.length == 1,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _back();
+      },
+      child: _foreign ? _foreignSheet(context) : _englishSheet(context),
+    );
+  }
+
+  Widget _englishSheet(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final dictionary = ref.watch(dictionaryProvider);
     return switch (dictionary) {
-      AsyncData(value: final dictionary?) => _englishEntries(dictionary.lookUp(widget.word)),
+      AsyncData(value: final dictionary?) => _englishEntries(dictionary.lookUp(_word)),
       AsyncData() => _missing(
         'Define works offline once the English dictionary is downloaded (${DictionaryPack.downloadSizeLabel}).',
       ),
@@ -124,9 +163,11 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
       padding: const EdgeInsets.fromLTRB(Space.gutter, 0, Space.gutter, Space.xxl),
       children: [
         _Heading(
-          word: first?.lemma ?? widget.word,
+          word: first?.lemma ?? _word,
           saved: _saved == true,
           onSave: meaning == null ? null : () => _save(meaning),
+          from: _from,
+          onBack: _trail.length > 1 ? _back : null,
         ),
         if (_base != 'en')
           Align(
@@ -143,7 +184,7 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
           Padding(
             padding: const EdgeInsets.only(top: Space.md),
             child: Text(
-              widget.word.contains(' ') ? 'Select a single word to look it up.' : 'Not in the dictionary.',
+              _word.contains(' ') ? 'Select a single word to look it up.' : 'Not in the dictionary.',
               style: text.bodyLarge?.copyWith(color: muted),
             ),
           ),
@@ -180,23 +221,32 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(sense.definition, style: text.bodyLarge),
+                          _WordsText(
+                            sense.definition,
+                            style: text.bodyLarge,
+                            onWord: (word) => _lookUp(word, sense.definition),
+                          ),
                           for (final example in sense.examples.take(2))
                             Padding(
                               padding: const EdgeInsets.only(top: Space.xxs),
-                              child: Text(
+                              child: _WordsText(
                                 example,
                                 style: text.bodyMedium?.copyWith(
                                   fontFamily: FontFamilies.reading,
                                   fontStyle: FontStyle.italic,
                                   color: muted,
                                 ),
+                                onWord: (word) => _lookUp(word, example),
                               ),
                             ),
                           if (sense.synonyms.isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.only(top: Space.xxs),
-                              child: Text('Also: ${sense.synonyms.join(', ')}', style: text.bodySmall),
+                              child: _WordsText(
+                                'Also: ${sense.synonyms.join(', ')}',
+                                style: text.bodySmall,
+                                onWord: (word) => _lookUp(word, sense.definition),
+                              ),
                             ),
                         ],
                       ),
@@ -207,7 +257,10 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
             ),
         ],
         const SizedBox(height: Space.xl),
-        Text('Open English WordNet · CC BY 4.0 · long-press a meaning to save it', style: text.labelSmall),
+        Text(
+          'Open English WordNet · CC BY 4.0 · tap a word to look it up · long-press a meaning to save it',
+          style: text.labelSmall,
+        ),
       ],
     );
   }
@@ -236,7 +289,7 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
     }
 
     final dictionary = ref.watch(foreignDictionaryProvider(code3));
-    final entries = dictionary.value?.lookUp(widget.word) ?? const <ForeignEntry>[];
+    final entries = dictionary.value?.lookUp(_word) ?? const <ForeignEntry>[];
     final first = entries.firstOrNull;
     final meaning = first == null
         ? null
@@ -246,7 +299,13 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
       controller: widget.scroll,
       padding: const EdgeInsets.fromLTRB(Space.gutter, 0, Space.gutter, Space.xxl),
       children: [
-        _Heading(word: first?.headword ?? widget.word, saved: _saved == true, onSave: meaning == null ? null : () => _save(meaning)),
+        _Heading(
+          word: first?.headword ?? _word,
+          saved: _saved == true,
+          onSave: meaning == null ? null : () => _save(meaning),
+          from: _from,
+          onBack: _trail.length > 1 ? _back : null,
+        ),
         if (dictionary.isLoading) const LinearProgressIndicator(minHeight: 2),
         if (!dictionary.isLoading && entries.isEmpty)
           Padding(
@@ -257,7 +316,12 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
           const SizedBox(height: Space.lg),
           Text(e.heading, style: text.titleSmall?.copyWith(color: muted)),
           const SizedBox(height: Space.xs),
-          SelectableText(e.body, style: text.bodyLarge?.copyWith(height: 1.5)),
+          // The translations are English: their words are looked up in English.
+          _WordsText(
+            e.body,
+            style: text.bodyLarge?.copyWith(height: 1.5),
+            onWord: (word) => _lookUp(word, e.body, english: true),
+          ),
         ],
         const SizedBox(height: Space.lg),
         Align(
@@ -294,7 +358,7 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
       controller: widget.scroll,
       padding: const EdgeInsets.fromLTRB(Space.gutter, 0, Space.gutter, Space.xxl),
       children: [
-        Text(widget.word, style: text.headlineMedium),
+        _Heading(word: _word, saved: false, onSave: null, from: _from, onBack: _trail.length > 1 ? _back : null),
         const SizedBox(height: Space.md),
         Text(message, style: text.bodyLarge),
         const SizedBox(height: Space.lg),
@@ -334,17 +398,37 @@ class _DefinitionSheetState extends ConsumerState<_DefinitionSheet> {
 }
 
 class _Heading extends StatelessWidget {
-  const _Heading({required this.word, required this.saved, required this.onSave});
+  const _Heading({required this.word, required this.saved, required this.onSave, this.from, this.onBack});
 
   final String word;
   final bool saved;
   final VoidCallback? onSave;
 
+  /// The word this one was tapped in, shown under it.
+  final String? from;
+  final VoidCallback? onBack;
+
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     return Row(
       children: [
-        Expanded(child: Text(word, style: Theme.of(context).textTheme.headlineMedium)),
+        if (onBack != null)
+          IconButton(icon: const Icon(Icons.arrow_back), tooltip: 'Back to “$from”', onPressed: onBack),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(word, style: text.headlineMedium),
+              if (from != null)
+                Text(
+                  'from “$from”',
+                  style: text.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                ),
+            ],
+          ),
+        ),
         if (onSave != null)
           saved
               ? TextButton.icon(
@@ -358,6 +442,38 @@ class _Heading extends StatelessWidget {
                   onPressed: onSave,
                 ),
       ],
+    );
+  }
+}
+
+/// [text] whose words look themselves up: a tap on a word calls [onWord] with it.
+class _WordsText extends StatelessWidget {
+  const _WordsText(this.text, {required this.style, required this.onWord});
+
+  final String text;
+  final TextStyle? style;
+  final ValueChanged<String> onWord;
+
+  static final _word = RegExp(r"[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*", unicode: true);
+
+  @override
+  Widget build(BuildContext context) {
+    final effective = DefaultTextStyle.of(context).style.merge(style);
+    return LayoutBuilder(
+      builder: (context, constraints) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapUp: (details) {
+          final painter = TextPainter(
+            text: TextSpan(text: text, style: effective),
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+          )..layout(maxWidth: constraints.maxWidth);
+          final range = painter.getWordBoundary(painter.getPositionForOffset(details.localPosition));
+          painter.dispose();
+          if (_word.firstMatch(text.substring(range.start, range.end))?[0] case final word?) onWord(word);
+        },
+        child: Text(text, style: effective),
+      ),
     );
   }
 }

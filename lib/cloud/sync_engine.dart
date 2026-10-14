@@ -209,6 +209,8 @@ class SyncEngine {
           'pages': s.pages,
           'startProgress': s.startProgress,
           'endProgress': s.endProgress,
+          'startPosition': s.startPosition,
+          'endPosition': s.endPosition,
           'updatedAt': Timestamp.fromDate(s.updatedAt),
           'syncedAt': FieldValue.serverTimestamp(),
           'deviceId': deviceId,
@@ -502,11 +504,15 @@ class SyncEngine {
           pages: Value((m['pages'] as num?)?.toInt() ?? 0),
           startProgress: Value((m['startProgress'] as num?)?.toDouble()),
           endProgress: Value((m['endProgress'] as num?)?.toDouble()),
+          startPosition: Value((m['startPosition'] as num?)?.toInt()),
+          endPosition: Value((m['endPosition'] as num?)?.toInt()),
           updatedAt: Value(updatedAt),
           deleted: Value(m['deleted'] == true),
         ),
       );
     }
+    // Sittings from a device on an older version move to their own ids here too.
+    await db.normalizeSessions();
 
     for (final doc in await changed('words')) {
       final m = doc.data();

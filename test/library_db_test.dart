@@ -92,4 +92,70 @@ void main() {
     await db.deleteWord('en:a');
     expect([for (final w in await db.dueWords(now)) w.id], ['en:b']);
   });
+
+  test('old sittings move to ids named by book, pages and time, and copies become one', () async {
+    final start = DateTime.utc(2026, 10, 1, 8);
+    ReadingSessionsCompanion sitting(String id, int seconds) => ReadingSessionsCompanion.insert(
+      id: id,
+      bookId: 'b',
+      startedAt: start,
+      endedAt: start.add(Duration(seconds: seconds)),
+      seconds: seconds,
+      updatedAt: start,
+    );
+    // Saved twice under random ids (older versions), and once in the earlier id form with
+    // pages only in its id.
+    await db.saveSession(sitting('k3x9', 1200));
+    await db.saveSession(sitting('k3xa', 1200));
+    await db.saveSession(
+      sitting('b(pg-4-9)(20261001T090000Z)', 600).copyWith(
+        startedAt: Value(start.add(const Duration(hours: 1))),
+        endedAt: Value(start.add(const Duration(hours: 1, minutes: 10))),
+      ),
+    );
+
+    await db.normalizeSessions();
+    final live = {for (final s in await db.allSessions()) s.id: s};
+    expect(live.keys, {'(b)(page-?-?)(20261001T080000Z)', '(b)(page-4-9)(20261001T090000Z)'});
+    expect(live['(b)(page-4-9)(20261001T090000Z)']!.startPosition, 4);
+    expect(live['(b)(page-4-9)(20261001T090000Z)']!.endPosition, 9);
+    // The old records are deleted rather than removed, so the move syncs; all of it is sent.
+    final dirty = {for (final s in await db.dirtySessions()) s.id: s.deleted};
+    expect(dirty['k3x9'], isTrue);
+    expect(dirty['k3xa'], isTrue);
+    expect(dirty['b(pg-4-9)(20261001T090000Z)'], isTrue);
+    expect(dirty['(b)(page-?-?)(20261001T080000Z)'], isFalse);
+
+    // Running again changes nothing.
+    await db.markSent(sentBooks: const [], sentCollections: const [], sentLinks: const [], sentAnnotations: const [], sentSessions: await db.dirtySessions());
+    await db.normalizeSessions();
+    expect(await db.dirtySessions(), isEmpty);
+  });
+
+  test('upgrading keeps sittings recorded before pages were kept, under their new ids', () async {
+    await db.close();
+    final start = DateTime.utc(2026, 10, 1, 8).millisecondsSinceEpoch ~/ 1000;
+    db = AppDatabase(
+      NativeDatabase.memory(
+        setup: (raw) {
+          // The sessions table as version 6 had it, with one sitting.
+          raw.execute('''
+            CREATE TABLE reading_sessions (
+              id TEXT NOT NULL PRIMARY KEY, book_id TEXT NOT NULL, device_name TEXT,
+              started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL, seconds INTEGER NOT NULL,
+              pages INTEGER NOT NULL DEFAULT 0, start_progress REAL, end_progress REAL,
+              updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,
+              dirty INTEGER NOT NULL DEFAULT 1)''');
+          raw.execute(
+            "INSERT INTO reading_sessions (id, book_id, started_at, ended_at, seconds, updated_at, dirty) "
+            "VALUES ('k3x9', 'b', $start, ${start + 600}, 600, $start, 0)",
+          );
+          raw.execute('PRAGMA user_version = 6');
+        },
+      ),
+    );
+    final live = await db.allSessions();
+    expect([for (final s in live) s.id], ['(b)(page-?-?)(20261001T080000Z)']);
+    expect(live.single.seconds, 600);
+  });
 }

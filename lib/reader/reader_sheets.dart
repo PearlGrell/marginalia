@@ -624,6 +624,15 @@ class ReaderSettingsList extends ConsumerWidget {
           onChanged: (on) => notifier.updateLayout((p) => p.copyWith(hyphenate: on)),
         ),
 
+        // ---- Display ----
+        section('Display'),
+        _Toggle(
+          title: 'Show clock',
+          subtitle: 'The time, above the page',
+          value: prefs.showClock,
+          onChanged: (on) => notifier.update((p) => p.copyWith(showClock: on)),
+        ),
+
         // ---- Reading ----
         section('Reading'),
         SegmentedButton<bool>(

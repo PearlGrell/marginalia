@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -37,7 +38,9 @@ enum _Phase { idle, preparing, turning, settling }
 /// jump, or several turns back in a row) the turn takes its pictures first.
 ///
 /// Drags follow the finger. Taps, passed in through [PageTurnerState.tapAt], turn with a fixed
-/// animation on the outer thirds and call [onCenterTap] in the middle.
+/// animation on the outer thirds and call [onCenterTap] in the middle. Either way the page is
+/// taken where the turn began: by its bottom corner near the bottom, its top corner near the
+/// top, and by the edge at that height in between.
 class PageTurner extends StatefulWidget {
   const PageTurner({
     super.key,
@@ -242,31 +245,50 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
 
   // ---- Gestures ----
 
-  /// A tap at [x], a fraction of the width. The page view claims taps (so links work) and
-  /// passes on the others, so taps arrive here rather than through a gesture detector.
-  void tapAt(double x) {
+  /// A tap at [x] and [y], fractions of the size. The page view claims taps (so links work)
+  /// and passes on the others, so taps arrive here rather than through a gesture detector.
+  void tapAt(double x, {double y = _defaultTapY}) {
     if (!widget.enabled) return;
     if (!widget.tapToTurn) {
       widget.onCenterTap?.call();
     } else if (x < 0.28) {
-      _tapTurn(widget.rightToLeft ? _Direction.forward : _Direction.backward);
+      _tapTurn(widget.rightToLeft ? _Direction.forward : _Direction.backward, y: y);
     } else if (x > 0.72) {
-      _tapTurn(widget.rightToLeft ? _Direction.backward : _Direction.forward);
+      _tapTurn(widget.rightToLeft ? _Direction.backward : _Direction.forward, y: y);
     } else {
       widget.onCenterTap?.call();
     }
   }
 
-  Future<void> _tapTurn(_Direction direction) async {
+  /// Turns without a place (the volume keys) take the page by its bottom corner.
+  static const _defaultTapY = 0.96;
+
+  Future<void> _tapTurn(_Direction direction, {double y = _defaultTapY}) async {
     if (_phase != _Phase.idle) {
       _queuedTap = direction;
       return;
     }
     final height = context.size!.height;
-    _cornerY = height * 0.96;
-    _tilt.value = -height * 0.12;
+    _cornerY = _anchorFor(y * height, height);
+    _tilt.value = _lean(height) * 1.2;
     _dragTotal = Offset.zero;
     if (await _begin(direction)) _settle(complete: true, tap: true);
+  }
+
+  /// Where on the right edge the page is lifted for a turn begun at [y]: a corner near the
+  /// top or bottom, otherwise the edge at that height.
+  static double _anchorFor(double y, double height) {
+    if (y > height * 0.7) return height;
+    if (y < height * 0.3) return 0;
+    return y;
+  }
+
+  /// How far a lifted corner rises towards the middle over a whole turn, as paper held by a
+  /// corner does. Held by the edge, it hardly leans.
+  double _lean(double height) {
+    if (_cornerY >= height) return -height * 0.1;
+    if (_cornerY <= 0) return height * 0.1;
+    return -height * 0.03;
   }
 
   void _onDragStart(DragStartDetails details) {
@@ -275,8 +297,9 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
     _dragTurned = false;
     _pendingReleaseVelocity = null;
     _queuedTap = null;
-    _cornerY = details.localPosition.dy.clamp(0, context.size!.height);
-    _tilt.value = 0;
+    final height = context.size!.height;
+    _cornerY = _anchorFor(details.localPosition.dy.clamp(0, height), height);
+    _tilt.value = _lean(height);
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
@@ -308,7 +331,17 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
       p = forward ? -_dx / width : 1 - _dx / width;
     }
     _progress.value = p.clamp(0.0, 1.0);
-    _tilt.value = _dragTotal.dy * 0.5;
+    if (_style == TurnStyle.curl) _followFingerUpAndDown();
+  }
+
+  /// The lifted point moves up and down with the finger, staying on the page. The curl
+  /// scales [_tilt] by progress (so a page laid back down lies flat), so set it to give the
+  /// finger's offset at the current progress, within bounds so a release can't swing it.
+  void _followFingerUpAndDown() {
+    final height = context.size!.height;
+    final offset = (_cornerY + _dragTotal.dy).clamp(0.0, height) - _cornerY;
+    final p = math.max(_progress.value, 0.05);
+    _tilt.value = (_lean(height) + offset / p).clamp(-height * 0.3, height * 0.3);
   }
 
   /// Change in progress per pixel the finger moves, for carrying its speed into the spring.

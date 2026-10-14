@@ -37,11 +37,9 @@ vec4 frontAt(vec2 p, float light) {
   return vec4(c.rgb * light, c.a);
 }
 
-// The back of the paper with the text showing faintly through, mirrored.
+// The back of the paper: plain, lit by where it faces. (p is kept so callers read alike.)
 vec4 backAt(vec2 p, float light) {
-  vec3 ink = texture(uPage, p / uSize).rgb;
-  vec3 c = mix(uBackColor.rgb, ink, 0.10);
-  return vec4(c * light, 1.0);
+  return vec4(uBackColor.rgb * light, 1.0);
 }
 
 // Distance from p to the page rectangle (0 inside).

@@ -180,6 +180,11 @@ class ReadingSessions extends Table {
   IntColumn get pages => integer().withDefault(const Constant(0))();
   RealColumn get startProgress => real().nullable()();
   RealColumn get endProgress => real().nullable()();
+
+  /// Readium positions (about a page each) where the sitting began and ended; null for
+  /// sittings recorded before they were kept.
+  IntColumn get startPosition => integer().nullable()();
+  IntColumn get endPosition => integer().nullable()();
   DateTimeColumn get updatedAt => dateTime()();
   BoolColumn get deleted => boolean().withDefault(const Constant(false))();
   BoolColumn get dirty => boolean().withDefault(const Constant(true))();
@@ -187,6 +192,24 @@ class ReadingSessions extends Table {
   @override
   Set<Column> get primaryKey => {id};
 }
+
+/// A sitting's id, named by the book (its fingerprint id), the pages read and when it
+/// started: `(3f9a…)(page-12-30)(20261014T072301Z)` (`?` for pages not known). The same sitting always gets the same id, on every device, so
+/// saving or syncing it again replaces it rather than counting it twice.
+String readingSessionId({
+  required String bookId,
+  required DateTime startedAt,
+  int? startPosition,
+  int? endPosition,
+}) {
+  final t = startedAt.toUtc();
+  String two(int n) => n.toString().padLeft(2, '0');
+  final time = '${t.year}${two(t.month)}${two(t.day)}T${two(t.hour)}${two(t.minute)}${two(t.second)}Z';
+  return '($bookId)(page-${startPosition ?? '?'}-${endPosition ?? '?'})($time)';
+}
+
+// Also matches the earlier `book(pg-12-30)(time)` form.
+final _sessionIdPages = RegExp(r'\((?:pg|page)-(\d+)-(\d+)\)\(\d{8}T\d{6}Z\)$');
 
 /// A word saved from Define, with spaced-repetition review state.
 @DataClassName('VocabularyWord')
@@ -294,7 +317,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? driftDatabase(name: 'marginalia'));
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -320,6 +343,11 @@ class AppDatabase extends _$AppDatabase {
         await m.addColumn(books, books.tags);
         await m.createTable(readingSessions);
         await m.createTable(words);
+      }
+      if (from < 7) {
+        await m.addColumn(readingSessions, readingSessions.startPosition);
+        await m.addColumn(readingSessions, readingSessions.endPosition);
+        await _normalizeSessions();
       }
     },
   );
@@ -745,6 +773,42 @@ class AppDatabase extends _$AppDatabase {
     if (to != null) query.where((s) => s.startedAt.isSmallerThanValue(to));
     query.orderBy([(s) => OrderingTerm.asc(s.startedAt)]);
     return query.watch();
+  }
+
+  /// Puts every sitting under its own id (see [readingSessionId]): sittings saved before
+  /// ids named them, or by a device on an older version, move to that id and the old record
+  /// is deleted, so the move reaches every device. Copies of one sitting become one record,
+  /// the longest. Every device arrives at the same ids, so they agree after syncing.
+  Future<void> normalizeSessions() => transaction(_normalizeSessions);
+
+  Future<void> _normalizeSessions() async {
+    final all = await (select(readingSessions)..where((s) => s.deleted.equals(false))).get();
+    final now = DateTime.now();
+    for (final s in all) {
+      var start = s.startPosition;
+      var end = s.endPosition;
+      if (start == null && end == null) {
+        // Recorded with pages in its id but before they had columns.
+        if (_sessionIdPages.firstMatch(s.id) case final m?) {
+          start = int.parse(m[1]!);
+          end = int.parse(m[2]!);
+        }
+      }
+      final id = readingSessionId(bookId: s.bookId, startedAt: s.startedAt, startPosition: start, endPosition: end);
+      if (id == s.id && start == s.startPosition && end == s.endPosition) continue;
+
+      final existing = id == s.id ? null : await getSession(id);
+      if (existing == null || existing.deleted || existing.seconds < s.seconds) {
+        await into(readingSessions).insertOnConflictUpdate(
+          s.copyWith(id: id, startPosition: Value(start), endPosition: Value(end), updatedAt: now, dirty: true),
+        );
+      }
+      if (id != s.id) {
+        await (update(readingSessions)..where((t) => t.id.equals(s.id))).write(
+          ReadingSessionsCompanion(deleted: const Value(true), updatedAt: Value(now), dirty: const Value(true)),
+        );
+      }
+    }
   }
 
   Future<List<ReadingSession>> allSessions() =>

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqlite3/sqlite3.dart';
 
@@ -27,6 +28,10 @@ class DictionaryEntry {
 /// on the phone by [DictionaryPack]. Lookups never use the network.
 class Dictionary {
   Dictionary._(this._db);
+
+  /// A dictionary over [db], already built (for tests).
+  @visibleForTesting
+  Dictionary.over(Database db) : this._(db);
 
   final Database _db;
 

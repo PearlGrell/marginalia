@@ -34,4 +34,10 @@ void main() {
     expect(early.radius, lessThan(later.radius));
     expect(later.radius, lessThanOrEqualTo(math.max(18, 400 * 0.09)));
   });
+
+  test('a page taken by its bottom corner and lifted folds on a slant', () {
+    final g = CurlGeometry.at(size: size, progress: 0.3, cornerY: 800, tilt: -200)!;
+    expect(g.axisDir.dx, greaterThan(0));
+    expect(g.axisDir.dy, greaterThan(0));
+  });
 }
