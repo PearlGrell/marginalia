@@ -181,6 +181,7 @@ Future<void> showAnnotationSheet(
   required VoidCallback onCopy,
   VoidCallback? onShareStory,
   VoidCallback? onShareLink,
+  Widget? extra,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -194,6 +195,7 @@ Future<void> showAnnotationSheet(
         onCopy: onCopy,
         onShareStory: onShareStory,
         onShareLink: onShareLink,
+        extra: extra,
       ),
     ),
   );
@@ -207,6 +209,7 @@ class _AnnotationSheet extends StatefulWidget {
     required this.onCopy,
     this.onShareStory,
     this.onShareLink,
+    this.extra,
   });
 
   final Annotation annotation;
@@ -219,6 +222,9 @@ class _AnnotationSheet extends StatefulWidget {
 
   /// Send it as a link.
   final VoidCallback? onShareLink;
+
+  /// More for this highlight, under the note (sharing it with a book club).
+  final Widget? extra;
 
   @override
   State<_AnnotationSheet> createState() => _AnnotationSheetState();
@@ -349,6 +355,7 @@ class _AnnotationSheetState extends State<_AnnotationSheet> {
                 ),
               ),
             ),
+            ?widget.extra,
             const SizedBox(height: Space.lg),
             Wrap(
               crossAxisAlignment: WrapCrossAlignment.center,

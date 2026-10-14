@@ -10,6 +10,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../cloud/sync_service.dart';
+import '../clubs/club_screens.dart';
+import '../clubs/clubs.dart';
 import '../companion/companion_sheet.dart';
 import '../data/database.dart';
 import '../data/library.dart';
@@ -445,6 +447,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  /// A highlight tapped in the page: the reader's own to edit, or a friend's to talk about.
+  Future<void> _onHighlightTapped(String id) async {
+    if (ClubNote.parseDecorationId(id) case (final club, final noteId)) {
+      final note = ref.read(clubNotesProvider(club)).value?.where((n) => n.id == noteId).firstOrNull;
+      if (note != null && mounted) await showClubNoteSheet(context, note);
+      return;
+    }
+    await _editAnnotation(id);
+  }
+
   Future<void> _editAnnotation(String id, {bool editNote = false}) async {
     final annotation = await _db.getAnnotation(id);
     if (annotation == null || !mounted) return;
@@ -455,6 +467,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       editNote: editNote,
       onShareStory: annotation.selectedText == null ? null : () => _shareStory(annotation.id),
       onShareLink: annotation.selectedText == null ? null : () => shareNoteLink(context, ref, annotation),
+      extra: annotation.selectedText == null ? null : ClubShareRow(annotation: annotation),
       onCopy: () {
         Clipboard.setData(ClipboardData(text: annotation.selectedText ?? ''));
         Navigator.pop(context);
@@ -606,8 +619,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (mounted && _chromeVisible) _toggleChrome();
   }
 
-  /// Draws highlights and notes in the page colors in effect, when either changes.
-  void _syncHighlights(Brightness pageBrightness) {
+  /// Draws highlights and notes in the page colors in effect, and what book-club friends
+  /// have shared (in each one's color), when any of them changes.
+  void _syncHighlights(Brightness pageBrightness, List<ClubNote> others) {
     final controller = _controller;
     if (controller == null) return;
     final highlights = [
@@ -618,6 +632,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             'locator': a.locator,
             'color': a.highlightColor.resolve(pageBrightness).toARGB32(),
           },
+      for (final n in others)
+        {
+          'id': n.decorationId,
+          'locator': n.locator,
+          'color': memberColor(n.authorUid).withValues(alpha: 0.35).toARGB32(),
+        },
     ];
     final signature = '$pageBrightness ${[for (final h in highlights) '${h['id']}:${h['color']}']}';
     if (signature == _sentHighlights) return;
@@ -709,7 +729,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final theme = prefs.resolvePage(MediaQuery.platformBrightnessOf(context), coverColor: _coverColor);
     final readium = prefs.toReadium(theme);
     _syncPreferences(readium);
-    _syncHighlights(theme.brightness);
+    _syncHighlights(theme.brightness, ref.watch(othersNotesProvider(widget.bookId)));
 
     final listening = ref.watch(listenProvider.select((s) => s.active));
     ref.listen(listenProvider.select((s) => (s.sentenceLocator, s.following)), (previous, next) {
@@ -851,7 +871,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             onLocationChanged: _onLocationChanged,
             onTap: _onPageTap,
             onSelection: _onSelection,
-            onHighlightTapped: _editAnnotation,
+            onHighlightTapped: _onHighlightTapped,
             onFootnote: _onFootnote,
             selecting: _selecting,
             onSelectionActive: (active) => setState(() => _selecting = active),

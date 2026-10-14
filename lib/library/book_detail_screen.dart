@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../cloud/sync_service.dart';
+import '../clubs/club_screens.dart';
 import '../data/database.dart';
 import '../data/library.dart';
 import '../theme/system_bars.dart';
@@ -181,6 +182,8 @@ class BookDetailScreen extends ConsumerWidget {
                   ),
                   _Label('Collections'),
                   _CollectionChips(bookId: book.id),
+                  _Label('Book clubs'),
+                  BookClubsSection(book: book),
                   _Label('Tags'),
                   _TagChips(book: book),
                   _Label('Series'),

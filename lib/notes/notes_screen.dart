@@ -96,6 +96,11 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
               children: [
                 Expanded(child: Text('Notes', style: text.displaySmall)),
                 IconButton(
+                  icon: const Icon(Icons.groups_outlined),
+                  tooltip: 'Book clubs',
+                  onPressed: () => context.push('/clubs'),
+                ),
+                IconButton(
                   icon: const Icon(Icons.search),
                   tooltip: 'Search',
                   onPressed: () => setState(() => _searching = true),

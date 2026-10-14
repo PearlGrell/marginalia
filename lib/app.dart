@@ -9,6 +9,8 @@ import 'cloud/devices_screen.dart';
 import 'cloud/drive_books_screen.dart';
 import 'cloud/sync_screen.dart';
 import 'cloud/sync_service.dart';
+import 'clubs/club_screens.dart';
+import 'clubs/clubs.dart' show normalizeClubCode;
 import 'discover/catalog_book_screen.dart';
 import 'discover/discover_screen.dart';
 import 'discover/opds_screens.dart';
@@ -96,6 +98,17 @@ final _router = GoRouter(
         title: state.uri.queryParameters['title'] ?? '',
         query: state.uri.queryParameters['query'] ?? '',
       ),
+    ),
+    GoRoute(
+      path: '/clubs',
+      parentNavigatorKey: _rootNavigator,
+      builder: (context, state) => const ClubsScreen(),
+    ),
+    // marginalia://app/club/<code>: an invitation to a book club.
+    GoRoute(
+      path: '/club/:code',
+      parentNavigatorKey: _rootNavigator,
+      builder: (context, state) => ClubScreen(code: normalizeClubCode(state.pathParameters['code']!)),
     ),
     GoRoute(
       path: '/discover/opds',
