@@ -52,6 +52,18 @@
             android:textColor="@color/widget_ink"
             android:textSize="18sp"/>
 
+        <!-- The streak and today's reading (hidden when there's neither). -->
+        <TextView
+            android:id="@+id/widget_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/widget_accent"
+            android:textSize="12sp"
+            android:visibility="gone"/>
+
         <!-- Takes whatever height is left, so the author and progress sit at the bottom. -->
         <FrameLayout
             android:layout_width="match_parent"

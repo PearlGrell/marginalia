@@ -19,7 +19,9 @@ import android.widget.RemoteViews
  * "Continue reading" on the home screen: the book read last, with its cover and progress.
  * Tapping it opens the book. It follows the wallpaper's colors on Android 12 and later, and
  * has a one-row layout for when it's one cell tall. The app keeps it current through [update]
- * (see DeviceChannel's `updateWidget`), so it never wakes the app itself.
+ * (see DeviceChannel's `updateWidget`), so it never wakes the app itself. The streak line
+ * ([updateStatus]) is worked out again each time it's drawn (every half hour at most), so
+ * it's right after midnight without the app.
  */
 class ContinueReadingWidget : AppWidgetProvider() {
 
@@ -59,10 +61,46 @@ class ContinueReadingWidget : AppWidgetProvider() {
                 .putFloat("progress", progress.toFloat())
                 .putString("coverPath", coverPath)
                 .apply()
+            redraw(context)
+        }
+
+        /**
+         * Saves the reading behind the streak line: [todaySeconds] read on [day] (yyyy-mm-dd),
+         * the [streak] in days through then, and the daily goal in minutes.
+         */
+        fun updateStatus(context: Context, day: String, todaySeconds: Int, streak: Int, goalMinutes: Int?) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString("day", day)
+                .putInt("todaySeconds", todaySeconds)
+                .putInt("streak", streak)
+                .putInt("goalMinutes", goalMinutes ?: 0)
+                .apply()
+            redraw(context)
+        }
+
+        private fun redraw(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
             manager.getAppWidgetIds(ComponentName(context, ContinueReadingWidget::class.java)).forEach {
                 manager.updateAppWidget(it, views(context, manager.getAppWidgetOptions(it)))
             }
+        }
+
+        /** "🔥 5 · 12 of 30 min today", for today as it is now; null when there's nothing to say. */
+        internal fun statusLine(
+            today: java.time.LocalDate,
+            day: java.time.LocalDate?,
+            todaySeconds: Int,
+            streak: Int,
+            goalMinutes: Int,
+        ): String? {
+            // What was saved is from today, or yesterday (nothing read yet today), or older.
+            val minutes = if (day == today) todaySeconds / 60 else 0
+            val alive = streak > 0 && (day == today || day == today.minusDays(1))
+            val parts = buildList {
+                if (alive) add(if (day == today && todaySeconds >= 60) "\uD83D\uDD25 $streak" else "\uD83D\uDD25 $streak \u00b7 read today to keep it")
+                if (goalMinutes > 0) add("$minutes of $goalMinutes min today") else if (minutes > 0) add("$minutes min today")
+            }
+            return parts.takeIf { it.isNotEmpty() }?.joinToString(" \u00b7 ")
         }
 
         private fun views(context: Context, options: Bundle?): RemoteViews {
@@ -121,6 +159,18 @@ class ContinueReadingWidget : AppWidgetProvider() {
                 views.setViewVisibility(R.id.widget_author, View.GONE)
                 views.setImageViewResource(R.id.widget_cover, R.mipmap.ic_launcher)
                 return views
+            }
+
+            if (tall) {
+                val status = statusLine(
+                    today = java.time.LocalDate.now(),
+                    day = prefs.getString("day", null)?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
+                    todaySeconds = prefs.getInt("todaySeconds", 0),
+                    streak = prefs.getInt("streak", 0),
+                    goalMinutes = prefs.getInt("goalMinutes", 0),
+                )
+                views.setTextViewText(R.id.widget_status, status.orEmpty())
+                views.setViewVisibility(R.id.widget_status, if (status == null) View.GONE else View.VISIBLE)
             }
 
             val progress = (prefs.getFloat("progress", 0f) * 100).toInt().coerceIn(0, 100)

@@ -33,6 +33,7 @@ import '../translate/translate_sheet.dart';
 import '../notes/note_actions.dart';
 import '../words/review.dart' show contextSentence;
 import 'annotations.dart';
+import 'chapter_progress.dart';
 import 'dictionary_sheet.dart';
 import 'footnote_sheet.dart';
 import 'reader_preferences.dart';
@@ -872,7 +873,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
-  /// Time left in the chapter and progress through the book, quiet under the page.
+  /// Where the reader is in the chapter, and progress through the book, quiet under the page.
   Widget _buildFooter(PageColors theme) {
     final location = _location;
     final style = TextStyle(
@@ -891,9 +892,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           child: Row(
             children: [
               Expanded(
-                child: Text(_timeLeftInChapter() ?? '', style: style, maxLines: 1),
+                child: Text(
+                  _chapterProgress() ?? '',
+                  style: style,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              if (total != null) Text('${(total * 100).round()}%', style: style),
+              if (total != null) Text('  ${(total * 100).round()}%', style: style),
             ],
           ),
         ),
@@ -901,19 +907,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
-  String? _timeLeftInChapter() {
+  String? _chapterProgress() {
     final location = _location;
-    final chapter = location == null ? null : _publication?.chapterFor(location.href);
-    final progression = location?.progression;
-    // A cover, preface or contents page is too short to time.
-    if (chapter == null || progression == null || chapter.count <= 1) return null;
-    final remaining = chapter.count * (1 - progression.clamp(0.0, 1.0));
-    final minutes = (remaining * _state.secondsPerPosition / 60).round();
-    if (minutes < 1) return 'Less than a minute left in chapter';
-    if (minutes < 60) return '$minutes min left in chapter';
-    final hours = minutes ~/ 60;
-    final rest = minutes % 60;
-    return rest == 0 ? '$hours h left in chapter' : '$hours h $rest min left in chapter';
+    final publication = _publication;
+    if (location == null || publication == null) return null;
+    return chapterProgress(
+      publication,
+      href: location.href,
+      position: location.position,
+      progression: location.progression,
+      secondsPerPosition: _state.secondsPerPosition,
+    );
   }
 
   Widget _buildTopBar(PageColors theme) {

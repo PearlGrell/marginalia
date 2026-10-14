@@ -45,6 +45,16 @@ class DeviceChannel(
                 }
                 result.success(null)
             }
+            "updateWidgetStatus" -> {
+                ContinueReadingWidget.updateStatus(
+                    activity,
+                    day = call.argument<String>("day") ?: return result.error("bad_args", "day", null),
+                    todaySeconds = call.argument<Int>("todaySeconds") ?: 0,
+                    streak = call.argument<Int>("streak") ?: 0,
+                    goalMinutes = call.argument<Int>("goalMinutes"),
+                )
+                result.success(null)
+            }
             "setBrightness" -> {
                 // The reader's own brightness, for this window only; null goes back to the phone's.
                 val value = call.argument<Double>("value")

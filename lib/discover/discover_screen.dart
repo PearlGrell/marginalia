@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../theme/tokens.dart';
 import '../share/shared_screens.dart';
 import 'gutenberg.dart';
+import 'opds_screens.dart';
 
 /// Free public-domain books, browsed like a bookshop: curated shelves, then search.
 class DiscoverScreen extends ConsumerStatefulWidget {
@@ -91,6 +92,7 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
               ),
             ),
             const SliverToBoxAdapter(child: SharedWithYouRow()),
+            const SliverToBoxAdapter(child: CatalogsRow()),
             SliverList.builder(
               itemCount: shelves.length,
               itemBuilder: (context, i) => _ShelfRow(shelf: shelves[i]),

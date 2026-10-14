@@ -11,6 +11,7 @@ import 'package:workmanager/workmanager.dart';
 
 import '../data/database.dart';
 import '../data/library.dart';
+import '../discover/opds.dart';
 import '../reader/reader_preferences.dart';
 import '../stats/reading_goals.dart';
 import '../storage/local_store.dart';
@@ -169,6 +170,7 @@ class SyncController extends Notifier<SyncStatus> {
       ref.invalidate(readerPreferencesProvider);
       ref.invalidate(uploadLimitProvider);
       ref.invalidate(readingGoalsProvider);
+      ref.invalidate(opdsCatalogsProvider);
       state = SyncStatus(report: report, steps: [...steps], lastSyncedAt: now);
       return report;
     } on TimeoutException {

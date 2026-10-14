@@ -11,6 +11,7 @@ import 'cloud/sync_screen.dart';
 import 'cloud/sync_service.dart';
 import 'discover/catalog_book_screen.dart';
 import 'discover/discover_screen.dart';
+import 'discover/opds_screens.dart';
 import 'data/database.dart';
 import 'data/library.dart';
 import 'library/book_detail_screen.dart';
@@ -20,6 +21,8 @@ import 'library/library_screen.dart';
 import 'library/watched_folders.dart';
 import 'notes/notes_screen.dart';
 import 'reader/reader_screen.dart';
+import 'stats/reading_goals.dart';
+import 'stats/reading_stats.dart';
 import 'theme/app_theme.dart';
 import 'util/root_messenger.dart';
 import 'settings/app_settings.dart';
@@ -92,6 +95,14 @@ final _router = GoRouter(
       builder: (context, state) => CatalogListScreen(
         title: state.uri.queryParameters['title'] ?? '',
         query: state.uri.queryParameters['query'] ?? '',
+      ),
+    ),
+    GoRoute(
+      path: '/discover/opds',
+      parentNavigatorKey: _rootNavigator,
+      builder: (context, state) => OpdsFeedScreen(
+        url: state.uri.queryParameters['url'] ?? '',
+        title: state.uri.queryParameters['title'] ?? 'Catalog',
       ),
     ),
     GoRoute(
@@ -195,6 +206,9 @@ class _TabsState extends ConsumerState<_Tabs> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkFolders());
     // The home-screen widget follows the book being read.
     ref.listenManual(continueReadingProvider, (_, next) => _updateWidget(next.value), fireImmediately: true);
+    // And shows the streak and today's reading.
+    ref.listenManual(sessionsProvider, (_, _) => _updateWidgetStatus(), fireImmediately: true);
+    ref.listenManual(readingGoalsProvider, (_, _) => _updateWidgetStatus());
     ref.listenManual(accountProvider, (_, account) {
       if (!account.signedIn || _syncedThisLaunch) return;
       _syncedThisLaunch = true;
@@ -239,6 +253,31 @@ class _TabsState extends ConsumerState<_Tabs> {
         'progress': book?.progress ?? 0,
         'coverPath': book?.coverPath,
       });
+    } on MissingPluginException {
+      // In tests.
+    }
+  }
+
+  String? _statusShown;
+
+  Future<void> _updateWidgetStatus() async {
+    final sessions = ref.read(sessionsProvider).value;
+    if (sessions == null) return;
+    final now = DateTime.now();
+    final progress = GoalProgress.of(sessions, const [], ref.read(readingGoalsProvider), now: now);
+    final (streak, _) = ReadingStats.streaks(sessions, now);
+    final day = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final status = {
+      'day': day,
+      'todaySeconds': progress.todaySeconds,
+      'streak': streak,
+      'goalMinutes': progress.goals.dailyMinutes,
+    };
+    final signature = status.toString();
+    if (signature == _statusShown) return;
+    _statusShown = signature;
+    try {
+      await const MethodChannel('marginalia/device').invokeMethod('updateWidgetStatus', status);
     } on MissingPluginException {
       // In tests.
     }
