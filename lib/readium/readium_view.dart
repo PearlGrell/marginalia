@@ -155,9 +155,10 @@ class ReadiumViewController {
   Future<void> setHighlights(List<Map<String, Object?>> highlights) =>
       _channel.invokeMethod('setHighlights', {'highlights': highlights});
 
-  /// Marks the sentence being read aloud and keeps it on screen; null clears it.
-  Future<void> setSpokenSentence(String? locatorJson, int color) =>
-      _channel.invokeMethod('setSpokenSentence', {'locator': locatorJson, 'color': color});
+  /// Marks the sentence being read aloud; null clears it. With [follow], turns (or scrolls)
+  /// to it when it isn't on screen.
+  Future<void> setSpokenSentence(String? locatorJson, int color, {bool follow = true}) =>
+      _channel.invokeMethod('setSpokenSentence', {'locator': locatorJson, 'color': color, 'follow': follow});
 
   /// Every place [query] appears in the book (up to 300), in reading order.
   Future<List<SearchResult>> search(String query) async {
@@ -173,8 +174,18 @@ class ReadiumViewController {
   Future<void> markSearchResult(String? locatorJson, int color) =>
       _channel.invokeMethod('markSearchResult', {'locator': locatorJson, 'color': color});
 
-  /// The paragraph at a point (fractions of the view) as Locator JSON, or null if there's no
-  /// text there.
+  /// The first sentence that starts on the page, as Locator JSON (its paragraph, with the
+  /// sentence as the text), or null.
+  Future<String?> firstVisibleSentence() async {
+    try {
+      return await _channel.invokeMethod<String>('firstVisibleSentence');
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  /// The sentence at a point (fractions of the view) as Locator JSON (its paragraph, with the
+  /// sentence as the text), or null if there's no text there.
   Future<String?> locatorAt(Offset point) async {
     try {
       return await _channel.invokeMethod<String>('locatorAt', {'x': point.dx, 'y': point.dy});

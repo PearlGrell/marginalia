@@ -15,15 +15,15 @@ import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import java.io.File
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -47,7 +47,7 @@ import org.readium.r2.shared.util.tokenizer.Tokenizer
 /**
  * Kokoro, a natural-sounding neural voice model, running on the phone with sherpa-onnx. The
  * model (kokoro-int8-multi-lang-v1_0, about 330 MB unpacked) is downloaded from Settings →
- * Downloads into [dir]; until then Listen uses the phone's own voices.
+ * Downloads into [dir]; Listen needs it.
  */
 object Kokoro {
     const val MODEL = "kokoro-int8-multi-lang-v1_0"
@@ -179,7 +179,7 @@ object Kokoro {
                     dictDir = "$d/dict",
                     lengthScale = 1.0f,
                 ),
-                numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4),
+                numThreads = performanceCores().coerceIn(2, 4),
                 debug = false,
                 provider = "cpu",
             ),
@@ -190,9 +190,107 @@ object Kokoro {
         )
         return OfflineTts(assetManager = null, config = config)
     }
+
+    /**
+     * The phone's fast cores: synthesis spread over slow efficiency cores as well runs slower
+     * than on the fast ones alone. All cores, if their speeds can't be read.
+     */
+    private fun performanceCores(): Int {
+        val all = Runtime.getRuntime().availableProcessors()
+        val speeds = (0 until all).mapNotNull {
+            runCatching {
+                File("/sys/devices/system/cpu/cpu$it/cpufreq/cpuinfo_max_freq").readText().trim().toLong()
+            }.getOrNull()
+        }
+        if (speeds.size != all) return all
+        val fastest = speeds.max()
+        return speeds.count { it >= fastest * 0.7 }
+    }
 }
 
-/** Plays mono float PCM, blocking until it has been heard. */
+/**
+ * Pieces of a sentence to synthesize one after another, so the first is heard sooner and
+ * the rest are made while it plays. Short sentences stay whole (splitting them changes how
+ * they sound); long ones break after commas and the like, into pieces of [min] characters
+ * or more.
+ */
+internal fun clauses(text: String, min: Int = 50, whole: Int = 140): List<String> {
+    val t = text.trim()
+    if (t.length <= whole) return listOf(t)
+    val parts = mutableListOf<String>()
+    val piece = StringBuilder()
+    for (part in t.split(Regex("(?<=[,;:\u2014\u2013\u3001\uFF0C\uFF1B\uFF1A])\\s*"))) {
+        if (part.isEmpty()) continue
+        if (piece.isNotEmpty()) piece.append(' ')
+        piece.append(part)
+        if (piece.length >= min) {
+            parts += piece.toString()
+            piece.clear()
+        }
+    }
+    if (piece.isNotEmpty()) {
+        // A short end goes with the piece before it.
+        if (parts.isNotEmpty() && piece.length < min / 2) parts[parts.lastIndex] = parts.last() + " " + piece else parts += piece.toString()
+    }
+    return parts
+}
+
+/**
+ * [samples] without the near-silence Kokoro puts around speech, keeping [lead] and [tail]
+ * seconds of it: the pause between sentences is then the voice's, not padding.
+ */
+internal fun trimSilence(samples: FloatArray, sampleRate: Int, lead: Double, tail: Double, threshold: Float = 0.006f): FloatArray {
+    var start = 0
+    while (start < samples.size && kotlin.math.abs(samples[start]) < threshold) start++
+    if (start == samples.size) return FloatArray((tail * sampleRate).toInt())
+    var end = samples.size - 1
+    while (end > start && kotlin.math.abs(samples[end]) < threshold) end--
+    val from = (start - (lead * sampleRate).toInt()).coerceAtLeast(0)
+    val to = (end + 1 + (tail * sampleRate).toInt()).coerceAtMost(samples.size)
+    return if (from == 0 && to == samples.size) samples else samples.copyOfRange(from, to)
+}
+
+/**
+ * One sentence's audio, made a piece at a time: it can be played while the rest is still
+ * being made, and abandoned part way.
+ */
+internal class Synthesis {
+    private val chunks = ArrayList<FloatArray>()
+    private val changes = MutableStateFlow(0)
+
+    @Volatile private var done = false
+
+    @Volatile private var error: Throwable? = null
+
+    /** Set to stop making it (checked between pieces). */
+    @Volatile var cancelled = false
+
+    fun add(samples: FloatArray) {
+        synchronized(chunks) { chunks.add(samples) }
+        changes.update { it + 1 }
+    }
+
+    fun finish(error: Throwable? = null) {
+        this.error = error
+        done = true
+        changes.update { it + 1 }
+    }
+
+    /** Piece [i], once it's made; null after the last. */
+    suspend fun chunk(i: Int): FloatArray? {
+        while (true) {
+            val seen = changes.value
+            synchronized(chunks) { if (i < chunks.size) return chunks[i] }
+            if (done) {
+                error?.let { throw it }
+                synchronized(chunks) { return chunks.getOrNull(i) }
+            }
+            changes.first { it != seen }
+        }
+    }
+}
+
+/** Plays mono float PCM, as it arrives, until it has been heard. */
 internal class PcmPlayer(sampleRate: Int) {
     private val track: AudioTrack = AudioTrack.Builder()
         .setAudioAttributes(
@@ -217,23 +315,37 @@ internal class PcmPlayer(sampleRate: Int) {
     @Volatile private var stopped = false
 
     /** Returns false if stopped before the end. */
-    suspend fun play(samples: FloatArray, isActive: () -> Boolean): Boolean {
+    suspend fun play(samples: FloatArray, isActive: () -> Boolean): Boolean =
+        play({ if (it == 0) samples else null }, isActive)
+
+    /** Plays the pieces [next] gives (null after the last). Returns false if stopped before the end. */
+    suspend fun play(next: suspend (Int) -> FloatArray?, isActive: () -> Boolean): Boolean {
         stopped = false
         track.play()
         val start = track.playbackHeadPosition
-        var offset = 0
-        val chunk = 4096
-        while (offset < samples.size) {
+        var written = 0
+        var index = 0
+        while (true) {
             if (stopped || !isActive()) return false
-            val n = track.write(samples, offset, minOf(chunk, samples.size - offset), AudioTrack.WRITE_BLOCKING)
-            if (n <= 0) break
-            offset += n
+            val samples = next(index++) ?: break
+            var offset = 0
+            while (offset < samples.size) {
+                if (stopped || !isActive()) return false
+                val n = track.write(samples, offset, minOf(CHUNK, samples.size - offset), AudioTrack.WRITE_BLOCKING)
+                if (n <= 0) break
+                offset += n
+            }
+            written += samples.size
         }
         // Wait until the last of it has come out of the speaker.
-        while (!stopped && isActive() && track.playbackHeadPosition - start < samples.size) {
-            delay(20)
+        while (!stopped && isActive() && track.playbackHeadPosition - start < written) {
+            delay(10)
         }
         return !stopped
+    }
+
+    private companion object {
+        const val CHUNK = 4096
     }
 
     fun stop() {
@@ -291,8 +403,10 @@ class KokoroError(override val message: String, override val cause: org.readium.
     TtsEngine.Error
 
 /**
- * Readium's text-to-speech engine, speaking with Kokoro. While a sentence plays, the next one
- * is already being synthesized ([Lookahead]), so reading flows without pauses between them.
+ * Readium's text-to-speech engine, speaking with Kokoro. Sentences are made ahead of time
+ * ([Lookahead] knows which come next), and each one a piece at a time, so reading flows
+ * without pauses and starts quickly. Work for sentences that won't be read (after a jump) is
+ * dropped at once, so it never holds up the one that will.
  */
 @OptIn(ExperimentalReadiumApi::class)
 class KokoroEngine(
@@ -307,7 +421,7 @@ class KokoroEngine(
     private val main = Handler(Looper.getMainLooper())
 
     /** sherpa-onnx isn't thread-safe: every synthesis goes through Kokoro's one thread. */
-    private val synthesis = Kokoro.dispatcher
+    private val kokoroThread = Kokoro.dispatcher
     private val scope = CoroutineScope(SupervisorJob())
     private val player = PcmPlayer(tts.sampleRate())
     private val lookahead = Lookahead()
@@ -323,7 +437,14 @@ class KokoroEngine(
     private var current: Pair<TtsEngine.RequestId, Job>? = null
 
     /** Audio ready or on its way, by [key]. */
-    private val prepared = LinkedHashMap<String, Deferred<FloatArray>>()
+    private val prepared = LinkedHashMap<String, Prepared>()
+
+    private class Prepared(val synthesis: Synthesis, val job: Job) {
+        fun cancel() {
+            synthesis.cancelled = true
+            job.cancel()
+        }
+    }
 
     private fun resolve(p: KokoroPreferences) = KokoroSettings(
         language = p.language ?: defaultLanguage,
@@ -342,18 +463,43 @@ class KokoroEngine(
     private fun key(text: String) = "${_settings.value.speaker}|${_settings.value.speed}|${text.trim()}"
 
     /** Synthesizes [text] (or picks up where an earlier request for it got to). */
-    private fun prepare(text: String): Deferred<FloatArray> = synchronized(prepared) {
+    private fun prepare(text: String): Synthesis = synchronized(prepared) {
         val key = key(text)
-        prepared[key]?.let { return it }
+        prepared[key]?.let { return it.synthesis }
         val settings = _settings.value
-        val job = scope.async(synthesis) {
-            // Kokoro's own speed keeps the voice natural; Media3 doesn't stretch it.
-            tts.generate(text, settings.speaker, settings.speed.toFloat()).samples
+        val sampleRate = tts.sampleRate()
+        val synthesis = Synthesis()
+        val job = scope.launch(kokoroThread) {
+            try {
+                val started = System.nanoTime()
+                val pieces = clauses(text)
+                var first = true
+                var heard = 0
+                for (piece in pieces) {
+                    if (synthesis.cancelled) break
+                    // Kokoro's own speed keeps the voice natural; Media3 doesn't stretch it.
+                    tts.generateWithCallback(piece, settings.speaker, settings.speed.toFloat()) { samples ->
+                        if (synthesis.cancelled) return@generateWithCallback 0
+                        val trimmed = trimSilence(samples, sampleRate, lead = if (first) LEAD else 0.0, tail = TAIL)
+                        first = false
+                        heard += trimmed.size
+                        synthesis.add(trimmed)
+                        1
+                    }
+                }
+                synthesis.finish()
+                if (!synthesis.cancelled) {
+                    val ms = (System.nanoTime() - started) / 1_000_000
+                    android.util.Log.d("Kokoro", "${text.length} chars in ${pieces.size}: ${ms} ms for ${heard * 1000L / sampleRate} ms of speech")
+                }
+            } catch (e: Throwable) {
+                synthesis.finish(e.takeUnless { it is kotlinx.coroutines.CancellationException })
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
         }
-        prepared[key] = job
-        // Keep the current sentence and the next two at most.
-        while (prepared.size > 3) prepared.remove(prepared.keys.first())?.cancel()
-        job
+        prepared[key] = Prepared(synthesis, job)
+        while (prepared.size > MAX_PREPARED) prepared.remove(prepared.keys.first())?.cancel()
+        synthesis
     }
 
     override fun speak(requestId: TtsEngine.RequestId, text: String, language: Language?) {
@@ -362,14 +508,24 @@ class KokoroEngine(
             player.stop()
             listener?.onFlushed(id)
         }
+        val key = key(text)
+        val synthesis = synchronized(prepared) {
+            // Not what was expected next (a jump): what was made ahead won't be read.
+            if (key !in prepared) {
+                prepared.values.forEach { it.cancel() }
+                prepared.clear()
+            }
+            prepare(text)
+        }
         val job = scope.launch {
             try {
-                val audio = prepare(text).await()
-                // While it plays, get the next sentence ready.
-                launch { lookahead.after(text)?.let { prepare(it) } }
+                // The sentences after it, queued behind it right away.
+                launch { lookahead.after(text, AHEAD).forEach { prepare(it) } }
+                val first = synthesis.chunk(0)
                 main.post { listener?.onStart(requestId) }
-                val finished = player.play(audio) { isActive }
+                val finished = player.play({ if (it == 0) first else synthesis.chunk(it) }) { isActive }
                 if (finished) {
+                    synchronized(prepared) { prepared.remove(key) }
                     main.post {
                         if (current?.first == requestId) current = null
                         listener?.onDone(requestId)
@@ -392,6 +548,17 @@ class KokoroEngine(
         listener?.onInterrupted(id)
     }
 
+    private companion object {
+        /** Sentences made ahead of the one being read. */
+        const val AHEAD = 3
+        const val MAX_PREPARED = AHEAD + 3
+
+        /** Silence kept before a sentence and after each piece, in seconds. */
+        const val LEAD = 0.02
+        const val TAIL = 0.11
+        val SPACES = Regex("\\s+")
+    }
+
     override fun close() {
         stop()
         scope.cancel()
@@ -409,11 +576,16 @@ class KokoroEngine(
      */
     private inner class Lookahead {
         private var iterator: Content.Iterator? = null
+
+        /** Sentences read from the book but not yet handed out. */
         private val queue = ArrayDeque<String>()
-        private var lastPredicted: String? = null
+
+        /** The sentence being spoken, and the ones known to follow it. */
+        private var spoken: String? = null
+        private val upcoming = ArrayDeque<String>()
         private val lock = Mutex()
 
-        private fun same(a: String, b: String) = a.trim() == b.trim()
+        private fun same(a: String, b: String) = a.replace(SPACES, " ").trim() == b.replace(SPACES, " ").trim()
 
         private suspend fun nextUtterance(): String? {
             while (queue.isEmpty()) {
@@ -434,39 +606,49 @@ class KokoroEngine(
             return queue.removeFirst()
         }
 
-        suspend fun after(text: String): String? = withContext(kotlinx.coroutines.Dispatchers.Default) {
-            lock.withLock { predict(text) }
+        /** Up to [count] sentences that follow [text], the one starting to be spoken. */
+        suspend fun after(text: String, count: Int): List<String> = withContext(kotlinx.coroutines.Dispatchers.Default) {
+            lock.withLock { predict(text, count) }
         }
 
-        private suspend fun predict(text: String): String? {
+        private suspend fun predict(text: String, count: Int): List<String> {
             try {
-                val predicted = lastPredicted
-                if (predicted == null || !same(predicted, text)) {
-                    // First sentence, or the reader jumped: start again from where it is,
-                    // and find the sentence being spoken.
-                    delay(150)
-                    queue.clear()
-                    iterator = publication.content(currentLocator())?.iterator()
-                    var found = false
-                    for (i in 0 until 40) {
-                        val next = nextUtterance() ?: break
-                        if (same(next, text)) {
-                            found = true
-                            break
-                        }
-                    }
-                    if (!found) {
-                        lastPredicted = null
-                        return null
+                when {
+                    upcoming.isNotEmpty() && same(upcoming.first(), text) -> upcoming.removeFirst()
+                    spoken != null && same(spoken!!, text) -> {}
+                    // First sentence, or the reader jumped: start again from where it is.
+                    !resync(text) -> {
+                        spoken = null
+                        upcoming.clear()
+                        return emptyList()
                     }
                 }
-                return nextUtterance().also { lastPredicted = it }
+                spoken = text
+                while (upcoming.size < count) upcoming.add(nextUtterance() ?: break)
+                return upcoming.toList()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (_: Exception) {
-                lastPredicted = null
-                return null
+                spoken = null
+                upcoming.clear()
+                return emptyList()
             }
+        }
+
+        /** Walks from the reader's position to [text]; false if it isn't there. */
+        private suspend fun resync(text: String): Boolean {
+            upcoming.clear()
+            // Readium may report the new position just after asking for the sentence.
+            for (attempt in 0 until 2) {
+                if (attempt > 0) delay(150)
+                queue.clear()
+                iterator = publication.content(currentLocator())?.iterator() ?: return false
+                for (i in 0 until 60) {
+                    val next = nextUtterance() ?: break
+                    if (same(next, text)) return true
+                }
+            }
+            return false
         }
     }
 }

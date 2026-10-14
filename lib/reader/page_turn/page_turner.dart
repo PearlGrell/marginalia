@@ -54,6 +54,7 @@ class PageTurner extends StatefulWidget {
     this.tapToTurn = true,
     this.enabled = true,
     this.onCenterTap,
+    this.onTurned,
   });
 
   final PageSource? source;
@@ -74,6 +75,9 @@ class PageTurner extends StatefulWidget {
   /// Off while text is selected: swipes and taps belong to the page then.
   final bool enabled;
   final VoidCallback? onCenterTap;
+
+  /// A page was turned by the reader (a swipe, a tap, a volume key).
+  final VoidCallback? onTurned;
   final Widget child;
 
   @override
@@ -467,9 +471,9 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
 
     if (_style == TurnStyle.none) {
       _phase = _Phase.settling;
-      if (complete) {
-        await (forward ? source.goForward() : source.goBackward());
+      if (complete && await (forward ? source.goForward() : source.goBackward())) {
         if (widget.haptics) HapticFeedback.selectionClick();
+        widget.onTurned?.call();
       }
       _finish(complete: complete);
       return;
@@ -499,6 +503,7 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
     }
     if (complete && moved) {
       if (widget.haptics) HapticFeedback.selectionClick();
+      widget.onTurned?.call();
       // Keep the pictures up a moment longer, so the view underneath has drawn the new page
       // (images included) by the time it shows.
       await _underReady;

@@ -20,9 +20,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.readium.navigator.media.common.MediaNavigator
 import org.readium.navigator.media.tts.TtsNavigator
@@ -38,7 +40,10 @@ import org.readium.r2.shared.util.getOrElse
  * - `start {publicationId, locator?, speed, speaker?, language?}` → true; errors
  *   `not_installed` (the voices aren't downloaded), `unsupported_language`, `unsupported`
  * - `play`, `pause`, `nextSentence`, `previousSentence`, `nextChapter`, `previousChapter`,
- *   `goTo {locator}` (reads on from a tapped line)
+ *   `goTo {locator}` (reads on from a tapped line: from the sentence in the locator's text)
+ *
+ * A locator given to `start` or `goTo` with a sentence as its text starts at that sentence,
+ * not at the beginning of its paragraph.
  * - `setSpeed {speed}` (0.5 to 3), `voices` → `[{id, name, language, selected}]`,
  *   `setVoice {id}`
  * - `stop`
@@ -64,6 +69,9 @@ class ListenChannel(
     private var controller: ListenableFuture<MediaController>? = null
     private var observers: Job? = null
 
+    /** Skipping silently to a sentence: sentences passed on the way aren't reported. */
+    private var seeking: Job? = null
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         if (call.method == "start") return start(call, result)
         if (call.method == "stop") {
@@ -82,8 +90,7 @@ class ListenChannel(
                 // A line tapped in the page: read on from there.
                 val locator = call.argument<String>("locator")?.let { Locator.fromJSON(JSONObject(it)) }
                     ?: return result.error("bad_args", "locator is invalid", null)
-                navigator.go(locator)
-                navigator.play()
+                seek(navigator, locator)
             }
             "setSpeed" -> {
                 preferences = preferences.copy(speed = call.argument<Double>("speed") ?: 1.0)
@@ -160,8 +167,8 @@ class ListenChannel(
             val token = SessionToken(activity, ComponentName(activity, ListenService::class.java))
             controller = MediaController.Builder(activity, token).buildAsync()
 
-            navigator.play()
             result.success(true)
+            if (locator?.text?.highlight.isNullOrBlank()) navigator.play() else seek(navigator, null, locator?.text?.highlight)
         }
     }
 
@@ -169,12 +176,7 @@ class ListenChannel(
         observers?.cancel()
         observers = scope.launch {
             navigator.location
-                .onEach {
-                    channel.invokeMethod(
-                        "onUtterance",
-                        mapOf("locator" to it.utteranceLocator.toJSON().toString(), "text" to it.utterance),
-                    )
-                }
+                .onEach { if (seeking?.isActive != true) report(it) }
                 .launchIn(this)
             navigator.playback
                 .onEach {
@@ -187,6 +189,53 @@ class ListenChannel(
                     )
                 }
                 .launchIn(this)
+        }
+    }
+
+    private fun report(location: TtsNavigator.Location) {
+        channel.invokeMethod(
+            "onUtterance",
+            mapOf("locator" to location.utteranceLocator.toJSON().toString(), "text" to location.utterance),
+        )
+    }
+
+    /**
+     * Reads on from [sentence] (by default, [locator]'s text): goes to [locator]'s paragraph,
+     * then skips, silently and without speaking, to the first sentence that matches. Readium
+     * only goes to the start of a paragraph, so a tap on its third line would otherwise read
+     * it again from the top.
+     */
+    private fun seek(
+        navigator: TtsNavigator<KokoroSettings, KokoroPreferences, KokoroError, KokoroVoice>,
+        locator: Locator?,
+        sentence: String? = locator?.text?.highlight,
+    ) {
+        seeking?.cancel()
+        seeking = scope.launch {
+            navigator.pause()
+            if (locator != null) {
+                val before = navigator.location.value
+                navigator.go(locator)
+                withTimeoutOrNull(SETTLE_MS) { navigator.location.first { it != before } }
+            }
+            val target = sentence?.let(::matchKey).orEmpty()
+            if (target.length >= MIN_MATCH) {
+                var location = navigator.location.value
+                var steps = 0
+                while (!sameSentence(matchKey(location.utterance), target) && steps < MAX_SKIP && navigator.hasNextUtterance()) {
+                    val passed = location
+                    navigator.skipToNextUtterance()
+                    location = withTimeoutOrNull(SETTLE_MS) { navigator.location.first { it != passed } } ?: break
+                    steps++
+                }
+                // Not found nearby: read the paragraph from its start rather than somewhere else.
+                if (!sameSentence(matchKey(location.utterance), target) && locator != null) {
+                    navigator.go(locator)
+                    withTimeoutOrNull(SETTLE_MS) { navigator.location.first { it != location } }
+                }
+            }
+            report(navigator.location.value)
+            navigator.play()
         }
     }
 
@@ -218,6 +267,8 @@ class ListenChannel(
     }
 
     fun stop() {
+        seeking?.cancel()
+        seeking = null
         observers?.cancel()
         observers = null
         navigator?.close()
@@ -235,4 +286,28 @@ class ListenChannel(
         channel.setMethodCallHandler(null)
         scope.cancel()
     }
+
+    private companion object {
+        const val SETTLE_MS = 1500L
+
+        /** How far past a tapped paragraph's start to look for the sentence. */
+        const val MAX_SKIP = 60
+        const val MIN_MATCH = 8
+    }
+}
+
+/** Text to compare sentences by: letters and digits, lowercase, single spaces. */
+internal fun matchKey(text: String): String =
+    text.lowercase().map { if (it.isLetterOrDigit()) it else ' ' }.joinToString("").replace(Regex(" +"), " ").trim()
+
+/**
+ * Whether Readium's sentence [utterance] is the one the page found ([target]), both as
+ * [matchKey]s. The page and Readium split sentences a little differently (abbreviations,
+ * quotes), so a shared start is enough.
+ */
+internal fun sameSentence(utterance: String, target: String): Boolean {
+    if (utterance.isEmpty() || target.isEmpty()) return false
+    val probe = minOf(30, utterance.length, target.length)
+    return utterance.startsWith(target.take(probe)) || target.startsWith(utterance.take(probe)) ||
+        (target.length >= 20 && utterance.contains(target.take(20)))
 }

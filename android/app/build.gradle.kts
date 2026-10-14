@@ -73,4 +73,6 @@ dependencies {
     // Unpacking the voice model (.tar.bz2).
     implementation("org.apache.commons:commons-compress:1.27.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+
+    testImplementation("junit:junit:4.13.2")
 }

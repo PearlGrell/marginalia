@@ -54,6 +54,7 @@ class ListenState {
     this.sleep = SleepTimer.off,
     this.sleepEndsAt,
     this.voice,
+    this.following = true,
   });
 
   /// The voice reading.
@@ -69,6 +70,10 @@ class ListenState {
   final SleepTimer sleep;
   final DateTime? sleepEndsAt;
 
+  /// The page follows the voice. Turning a page by hand stops it, so the next sentence
+  /// doesn't turn back; [ListenController.follow] starts it again.
+  final bool following;
+
   ListenState copyWith({
     bool? active,
     bool? playing,
@@ -78,7 +83,9 @@ class ListenState {
     DateTime? sleepEndsAt,
     bool clearSleepEnd = false,
     KokoroVoice? voice,
+    bool? following,
   }) => ListenState(
+    following: following ?? this.following,
     voice: voice ?? this.voice,
     active: active ?? this.active,
     playing: playing ?? this.playing,
@@ -197,10 +204,21 @@ class ListenController extends Notifier<ListenState> {
     state = state.copyWith(voice: voice.voice);
   }
 
-  /// Reads on from [locatorJson] (a line tapped in the page).
+  /// Reads on from [locatorJson] (a line tapped in the page), and follows it again.
   Future<void> readFrom(String locatorJson) async {
     if (!state.active) return;
+    state = state.copyWith(following: true);
     await _channel.invokeMethod('goTo', {'locator': locatorJson});
+  }
+
+  /// The reader turned the page by hand: stop following the voice until asked.
+  void stopFollowing() {
+    if (state.active && state.following) state = state.copyWith(following: false);
+  }
+
+  /// Follow the voice again (back to the sentence being read).
+  void follow() {
+    if (state.active && !state.following) state = state.copyWith(following: true);
   }
 
   /// The next sleep timer setting, for stepping through them with one button.

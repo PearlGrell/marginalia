@@ -608,20 +608,23 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Future<void> _onPageTap(Offset point) async {
     // A tap clears any selection, even if the page never said the selection ended.
     if (_selecting) setState(() => _selecting = false);
-    // With the controls showing, a tap anywhere on the page just puts them away (rather
-    // than turning the page or jumping the voice underneath them).
-    if (_chromeVisible) {
-      setState(() => _chromeVisible = false);
-      return;
-    }
+    // Listening, a tap on text reads from there, whatever else is showing. The very edges
+    // still turn pages.
     final controller = _controller;
-    if (_listen.isActive && controller != null) {
+    if (_listen.isActive && controller != null && point.dx > 0.08 && point.dx < 0.92) {
       final locator = await controller.locatorAt(point);
       if (locator != null) {
         HapticFeedback.selectionClick();
+        if (_chromeVisible) setState(() => _chromeVisible = false);
         await _listen.readFrom(locator);
         return;
       }
+    }
+    // With the controls showing, a tap anywhere on the page just puts them away (rather
+    // than turning the page underneath them).
+    if (_chromeVisible) {
+      setState(() => _chromeVisible = false);
+      return;
     }
     _pageTurner.currentState?.tapAt(point.dx, y: point.dy);
   }
@@ -630,9 +633,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final publication = _publication;
     if (publication == null) return;
     if (_chromeVisible) _toggleChrome();
+    // From the first sentence that starts on this page, not the top of its paragraph.
+    final start = await _controller?.firstVisibleSentence() ?? _location?.locatorJson;
     final error = await _listen.start(
       publication.id,
-      _location?.locatorJson,
+      start,
       language: _book?.language ?? publication.language,
     );
     if (error == ListenController.needsVoices) {
@@ -670,8 +675,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _syncHighlights(theme.brightness);
 
     final listening = ref.watch(listenProvider.select((s) => s.active));
-    ref.listen(listenProvider.select((s) => s.sentenceLocator), (_, locator) {
-      _controller?.setSpokenSentence(locator, theme.ink.withValues(alpha: 0.18).toARGB32());
+    ref.listen(listenProvider.select((s) => (s.sentenceLocator, s.following)), (previous, next) {
+      final (locator, following) = next;
+      // Coming back to the voice moves to it; otherwise only a new sentence does.
+      if (locator == previous?.$1 && (following == previous?.$2 || !following)) return;
+      _controller?.setSpokenSentence(locator, theme.ink.withValues(alpha: 0.18).toARGB32(), follow: following);
     });
     ref.listen(listenProvider.select((s) => s.active), (_, active) {
       if (!active) _controller?.setSpokenSentence(null, 0);
@@ -789,6 +797,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           tapToTurn: prefs.tapToTurn,
           enabled: !_selecting,
           onCenterTap: _toggleChrome,
+          // Turning by hand while listening: the page stops following the voice.
+          onTurned: _listen.stopFollowing,
           child: ReadiumView(
             publicationId: publication.id,
             preferences: readium,

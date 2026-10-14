@@ -25,6 +25,9 @@ class _PlayerBarState extends ConsumerState<PlayerBar> {
 
   static String _speed(double s) => s == s.roundToDouble() ? '${s.toInt()}×' : '$s×';
 
+  /// Height of the bar's last row (voices, a hint, or the way back to the voice).
+  static const _slot = 44.0;
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(listenProvider);
@@ -149,9 +152,28 @@ class _PlayerBarState extends ConsumerState<PlayerBar> {
                 ),
               ],
             ),
-            if (_choosingVoice)
+            // One height whatever shows here: a bar that grows makes the page lay out again.
+            if (!state.following)
               SizedBox(
-                height: 44,
+                height: _slot,
+                child: Center(
+                  child: chip(
+                    on: true,
+                    onTap: listen.follow,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.my_location, size: 16, color: theme.ink),
+                        const SizedBox(width: 6),
+                        Text('Back to the voice', style: small),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+            else if (_choosingVoice)
+              SizedBox(
+                height: _slot,
                 child: FutureBuilder<List<Voice>>(
                   future: _voices,
                   builder: (context, snapshot) {
@@ -184,9 +206,11 @@ class _PlayerBarState extends ConsumerState<PlayerBar> {
                 ),
               )
             else
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text('Tap a line to read from there', style: small.copyWith(fontSize: 11, color: muted)),
+              SizedBox(
+                height: _slot,
+                child: Center(
+                  child: Text('Tap a line to read from there', style: small.copyWith(fontSize: 11, color: muted)),
+                ),
               ),
           ],
         ),

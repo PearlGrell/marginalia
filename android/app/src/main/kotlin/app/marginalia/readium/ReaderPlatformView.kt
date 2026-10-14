@@ -2,8 +2,11 @@ package app.marginalia.readium
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.view.Choreographer
 import android.view.View
+import android.view.ViewGroup
+import android.webkit.WebView
 import android.widget.FrameLayout
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.commitNow
@@ -37,6 +40,7 @@ import org.readium.r2.shared.publication.Href
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
+import org.readium.r2.shared.publication.html.cssSelector
 import org.readium.r2.shared.publication.services.locateProgression
 import org.readium.r2.shared.publication.services.search.search
 import org.readium.r2.shared.util.AbsoluteUrl
@@ -50,11 +54,14 @@ import org.readium.r2.shared.util.AbsoluteUrl
  * - `goToLocator {locator}`, `goToHref {href}`, `goToProgression {progression}` → bool
  * - `setPreferences {…}` (see [PreferencesMapper])
  * - `setHighlights {highlights: [{id, locator, color}]}` draws the reader's highlights
- * - `setSpokenSentence {locator?, color}` marks the sentence being read aloud
+ * - `setSpokenSentence {locator?, color, follow}` marks the sentence being read aloud and,
+ *   with `follow`, turns (or scrolls) to it when it isn't on screen
  * - `search {query}` → `[{locator, title, before, match, after, progression}]`;
  *   `markSearchResult {locator?, color}` underlines the one being looked at
  * - `insertTranslation {id, text}` puts a translation after a marked paragraph
- * - `locatorAt {x, y}` → the locator of the paragraph at a tap, or null
+ * - `locatorAt {x, y}` → the locator of the sentence at a tap (its paragraph, with the
+ *   sentence as the text), or null; `firstVisibleSentence` → the same for the first sentence
+ *   that starts on the page
  * - `snapshot {scale?}` → `{width, height, pixels}` with RGBA8888 pixels of the visible page,
  *   which the page curl animates.
  *
@@ -223,6 +230,7 @@ class ReaderPlatformView(
                 // While reading aloud: mark the sentence and keep it on screen.
                 val locator = call.argument<String>("locator")?.let { Locator.fromJSON(JSONObject(it)) }
                 val tint = (call.argument<Number>("color"))?.toInt() ?: 0
+                val follow = call.argument<Boolean>("follow") ?: true
                 scope.launch {
                     navigator.applyDecorations(
                         listOfNotNull(
@@ -232,7 +240,7 @@ class ReaderPlatformView(
                         ),
                         SPOKEN,
                     )
-                    if (locator != null) navigator.go(locator, animated = false)
+                    if (locator != null && follow) keepInView(navigator, locator)
                     result.success(null)
                 }
             }
@@ -269,26 +277,20 @@ class ReaderPlatformView(
                 }
             }
             "locatorAt" -> {
-                // The paragraph under a tap (fractions of the view), as a locator listening
-                // can start from: the page's locator, narrowed to that element.
+                // The sentence under a tap (fractions of the view), as a locator listening can
+                // start from: the page's locator, narrowed to its paragraph.
                 val x = call.argument<Double>("x") ?: return result.success(null)
                 val y = call.argument<Double>("y") ?: return result.success(null)
+                // Readium's tap points are in its own view, which pads the page: find the spot
+                // in the page's web view, where the script looks.
+                val (wx, wy) = webFractions(x, y) ?: (x to y)
                 scope.launch {
-                    val found = navigator.evaluateJavascript(
-                        LINE_AT_SCRIPT.replace("%X%", x.toString()).replace("%Y%", y.toString()),
-                    )?.let { raw ->
-                        runCatching { JSONObject(JSONObject("{\"v\":$raw}").getString("v")) }.getOrNull()
-                    }
-                    if (found == null) return@launch result.success(null)
-                    val page = navigator.currentLocator.value
-                    val locator = page.copy(
-                        locations = page.locations.copy(
-                            otherLocations = page.locations.otherLocations + ("cssSelector" to found.getString("selector")),
-                        ),
-                        text = Locator.Text(highlight = found.optString("text")),
-                    )
-                    result.success(locator.toJSON().toString())
+                    val script = LINE_AT_SCRIPT.replace("%X%", wx.toString()).replace("%Y%", wy.toString())
+                    result.success(sentenceLocator(navigator, script)?.toJSON()?.toString())
                 }
+            }
+            "firstVisibleSentence" -> scope.launch {
+                result.success(sentenceLocator(navigator, FIRST_VISIBLE_SCRIPT)?.toJSON()?.toString())
             }
             "insertTranslation" -> {
                 val id = call.argument<String>("id")
@@ -331,6 +333,73 @@ class ReaderPlatformView(
                 }
             }
             else -> result.notImplemented()
+        }
+    }
+
+    /**
+     * Runs [script], which finds a sentence in the page (`{selector, text, sentence}`), and
+     * makes it a locator: the page's, narrowed to the sentence's paragraph, with the sentence
+     * as its text.
+     */
+    private suspend fun sentenceLocator(navigator: EpubNavigatorFragment, script: String): Locator? {
+        val found = navigator.evaluateJavascript(script)?.let { raw ->
+            runCatching { JSONObject(JSONObject("{\"v\":$raw}").getString("v")) }.getOrNull()
+        } ?: return null
+        val page = navigator.currentLocator.value
+        return page.copy(
+            locations = page.locations.copy(
+                otherLocations = page.locations.otherLocations + ("cssSelector" to found.getString("selector")),
+            ),
+            text = Locator.Text(highlight = found.optString("sentence").ifEmpty { found.optString("text") }),
+        )
+    }
+
+    /** ([x], [y]), fractions of the navigator's view, as fractions of the web view under it. */
+    private fun webFractions(x: Double, y: Double): Pair<Double, Double>? {
+        val root = navigator?.view ?: return null
+        val origin = IntArray(2).also(root::getLocationInWindow)
+        val px = origin[0] + x * root.width
+        val py = origin[1] + y * root.height
+        val visible = Rect()
+        val web = webViews(root).firstOrNull {
+            it.isShown && it.getGlobalVisibleRect(visible) && visible.contains(px.toInt(), py.toInt())
+        } ?: return null
+        if (web.width == 0 || web.height == 0) return null
+        val at = IntArray(2).also(web::getLocationInWindow)
+        return (px - at[0]) / web.width to (py - at[1]) / web.height
+    }
+
+    private fun webViews(view: View): List<WebView> = when (view) {
+        is WebView -> listOf(view)
+        is ViewGroup -> (0 until view.childCount).flatMap { webViews(view.getChildAt(it)) }
+        else -> emptyList()
+    }
+
+    /**
+     * Keeps the sentence being read on screen, moving only when it isn't: turns as many pages
+     * as it is away (or scrolls it a third of the way down). If it can't be found in the page,
+     * goes to it as Readium does.
+     */
+    private suspend fun keepInView(navigator: EpubNavigatorFragment, locator: Locator) {
+        if (locator.href.removeFragment() != navigator.currentLocator.value.href.removeFragment()) {
+            navigator.go(locator, animated = false)
+            return
+        }
+        val script = WHERE_IS_SCRIPT
+            .replace("%SELECTOR%", JSONObject.quote(locator.locations.cssSelector.orEmpty()))
+            .replace("%TEXT%", JSONObject.quote(locator.text.highlight.orEmpty()))
+            .replace("%SCROLL%", (preferences.scroll == true).toString())
+        val where = navigator.evaluateJavascript(script)?.let { raw ->
+            runCatching { JSONObject("{\"v\":$raw}").getString("v") }.getOrNull()
+        }
+        when (val move = Follow.parse(where)) {
+            Follow.Visible -> {}
+            is Follow.Pages -> repeat(kotlin.math.abs(move.count)) {
+                if (move.count > 0) navigator.goForward(animated = false) else navigator.goBackward(animated = false)
+                withTimeoutOrNull(SETTLE_TIMEOUT_MS) { navigator.currentLocator.drop(1).first() }
+            }
+            is Follow.Scroll -> navigator.evaluateJavascript("window.scrollBy(0, ${move.by});")
+            Follow.Unknown -> navigator.go(locator, animated = false)
         }
     }
 
@@ -442,22 +511,160 @@ class ReaderPlatformView(
         """.trimIndent()
         private const val SETTLE_TIMEOUT_MS = 1500L
 
-        /** The block of text at (%X%, %Y%), fractions of the page: {selector, text}, or null. */
+        /**
+         * Helpers for the scripts below: a block's selector, and the sentence around an offset
+         * in its text.
+         */
+        private val SENTENCE_HELPERS = """
+              var BLOCKS = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, dd, dt, figcaption, td, pre';
+              function selectorOf(block) {
+                var parts = [];
+                for (var n = block; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
+                  var i = 1;
+                  for (var s = n.previousElementSibling; s; s = s.previousElementSibling) i++;
+                  parts.unshift(n.tagName.toLowerCase() + ':nth-child(' + i + ')');
+                }
+                return 'body > ' + parts.join(' > ');
+              }
+              function offsetIn(block, node, offset) {
+                var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT), n, at = 0;
+                while ((n = walker.nextNode())) {
+                  if (n === node) return at + offset;
+                  at += n.nodeValue.length;
+                }
+                return -1;
+              }
+              var END = /[.!?\u2026\u3002\uFF01\uFF1F]/;
+              function sentenceAt(text, at, startingHere) {
+                var start = at;
+                if (!startingHere) while (start > 0 && !END.test(text[start - 1])) start--;
+                var end = at;
+                while (end < text.length && !END.test(text[end])) end++;
+                return text.substring(start, Math.min(text.length, end + 1)).replace(/\s+/g, ' ').trim();
+              }
+              function found(block, sentence) {
+                var text = (block.textContent || '').replace(/\s+/g, ' ').trim();
+                if (!text || block === document.body || block === document.documentElement) return null;
+                return JSON.stringify({ selector: selectorOf(block), text: text.substring(0, 200), sentence: sentence.substring(0, 300) });
+              }
+        """.trimIndent()
+
+        /**
+         * The sentence at (%X%, %Y%), fractions of the page's web view:
+         * {selector, text, sentence}, or null.
+         */
         private val LINE_AT_SCRIPT = """
             (function () {
-              var el = document.elementFromPoint(window.innerWidth * %X%, window.innerHeight * %Y%);
+              $SENTENCE_HELPERS
+              var x = window.innerWidth * %X%, y = window.innerHeight * %Y%;
+              var el = document.elementFromPoint(x, y);
               if (!el) return null;
-              var block = el.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, dd, dt, figcaption, td, pre');
-              if (!block) block = el;
-              var text = (block.innerText || '').trim();
-              if (!text || block === document.body || block === document.documentElement) return null;
-              var parts = [];
-              for (var n = block; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
-                var i = 1;
-                for (var s = n.previousElementSibling; s; s = s.previousElementSibling) i++;
-                parts.unshift(n.tagName.toLowerCase() + ':nth-child(' + i + ')');
+              var block = el.closest(BLOCKS) || el;
+              var sentence = '';
+              var caret = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+              if (caret && block.contains(caret.startContainer)) {
+                var at = offsetIn(block, caret.startContainer, caret.startOffset);
+                if (at >= 0) sentence = sentenceAt(block.textContent, at, false);
               }
-              return JSON.stringify({ selector: 'body > ' + parts.join(' > '), text: text.substring(0, 200) });
+              return found(block, sentence);
+            })();
+        """.trimIndent()
+
+        /**
+         * The first sentence that starts on the page (not one carried over from the page
+         * before): {selector, text, sentence}, or null.
+         */
+        private val FIRST_VISIBLE_SCRIPT = """
+            (function () {
+              $SENTENCE_HELPERS
+              var w = window.innerWidth, h = window.innerHeight;
+              var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), n;
+              var range = document.createRange();
+              while ((n = walker.nextNode())) {
+                var value = n.nodeValue;
+                if (!/\S/.test(value)) continue;
+                for (var i = 0; i < value.length; i++) {
+                  if (/\s/.test(value[i])) continue;
+                  range.setStart(n, i);
+                  range.setEnd(n, i + 1);
+                  var r = range.getBoundingClientRect();
+                  if (r.width === 0 && r.height === 0) continue;
+                  if (r.right <= 0 || r.left >= w || r.bottom <= 0 || r.top >= h) {
+                    // Skip ahead a whole node once it's clearly before the page.
+                    if (r.left < 0 || r.bottom <= 0) { range.setStart(n, value.length - 1); range.setEnd(n, value.length);
+                      var last = range.getBoundingClientRect();
+                      if (last.right <= 0 || last.bottom <= 0) break; }
+                    continue;
+                  }
+                  var block = n.parentElement.closest(BLOCKS) || n.parentElement;
+                  var text = block.textContent;
+                  var at = offsetIn(block, n, i);
+                  if (at < 0) return found(block, '');
+                  // Carried over from the page before: start at the next sentence.
+                  var before = text.substring(0, at).replace(/\s+$/, '');
+                  if (before.length > 0 && !END.test(before[before.length - 1])) {
+                    var next = at;
+                    while (next < text.length && !END.test(text[next])) next++;
+                    while (next < text.length && (END.test(text[next]) || /[\s\u201D\u2019"')\]]/.test(text[next]))) next++;
+                    if (next < text.length) return found(block, sentenceAt(text, next, true));
+                    continue;
+                  }
+                  return found(block, sentenceAt(text, at, true));
+                }
+              }
+              return null;
+            })();
+        """.trimIndent()
+
+        /**
+         * Where the sentence %TEXT% (in %SELECTOR%, or anywhere in the chapter) is, from the
+         * page on screen: "visible", "page:N" (N pages on, negative for back), "scroll:PX",
+         * or "unknown".
+         */
+        private val WHERE_IS_SCRIPT = """
+            (function () {
+              var selector = %SELECTOR%, text = %TEXT%, scroll = %SCROLL%;
+              var probe = text.replace(/\s+/g, ' ').trim().substring(0, 60);
+              if (!probe) return 'unknown';
+              function locate(root) {
+                if (!root) return null;
+                var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), n;
+                var nodes = [], raw = '';
+                while ((n = walker.nextNode())) { nodes.push([n, raw.length]); raw += n.nodeValue; }
+                // Whitespace-collapsed text, with each character's place in the raw text.
+                var flat = '', map = [], space = false;
+                for (var i = 0; i < raw.length; i++) {
+                  if (/\s/.test(raw[i])) { if (!space) { flat += ' '; map.push(i); } space = true; }
+                  else { flat += raw[i]; map.push(i); space = false; }
+                }
+                var at = flat.indexOf(probe);
+                if (at < 0) return null;
+                var start = map[at], node = null, off = 0;
+                for (var k = 0; k < nodes.length; k++) {
+                  if (nodes[k][1] <= start) { node = nodes[k][0]; off = nodes[k][1]; } else break;
+                }
+                if (!node) return null;
+                var range = document.createRange();
+                var o = Math.min(start - off, node.nodeValue.length - 1);
+                range.setStart(node, o);
+                range.setEnd(node, o + 1);
+                var rects = range.getClientRects();
+                return rects.length ? rects[0] : range.getBoundingClientRect();
+              }
+              var root = null;
+              try { root = selector ? document.querySelector(selector) : null; } catch (e) {}
+              var r = locate(root) || locate(document.body);
+              if (!r) return 'unknown';
+              var w = window.innerWidth, h = window.innerHeight;
+              if (scroll) {
+                if (r.top >= 0 && r.bottom <= h * 0.9) return 'visible';
+                return 'scroll:' + Math.round(r.top - h / 3);
+              }
+              var page = Math.floor((r.left + 1) / w);
+              var rtl = getComputedStyle(document.documentElement).direction === 'rtl' ||
+                getComputedStyle(document.body).direction === 'rtl';
+              if (rtl) page = -page;
+              return page === 0 ? 'visible' : 'page:' + page;
             })();
         """.trimIndent()
     }
@@ -488,3 +695,30 @@ private fun Locator.toEventMap(): Map<String, Any?> = mapOf(
     "totalProgression" to locations.totalProgression,
     "position" to locations.position,
 )
+
+/** What keeping the spoken sentence on screen takes, from the page's `WHERE_IS_SCRIPT`. */
+internal sealed interface Follow {
+    data object Visible : Follow
+
+    data class Pages(val count: Int) : Follow
+
+    data class Scroll(val by: Int) : Follow
+
+    data object Unknown : Follow
+
+    companion object {
+        /** Further than a few pages away, going straight there beats turning one by one. */
+        private const val MAX_TURNS = 3
+
+        fun parse(where: String?): Follow = when {
+            where == "visible" -> Visible
+            where?.startsWith("page:") == true ->
+                where.removePrefix("page:").toIntOrNull()
+                    ?.takeIf { it != 0 && kotlin.math.abs(it) <= MAX_TURNS }
+                    ?.let(::Pages)
+                    ?: if (where == "page:0") Visible else Unknown
+            where?.startsWith("scroll:") == true -> where.removePrefix("scroll:").toIntOrNull()?.let(::Scroll) ?: Unknown
+            else -> Unknown
+        }
+    }
+}
