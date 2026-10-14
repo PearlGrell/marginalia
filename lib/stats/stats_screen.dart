@@ -8,6 +8,7 @@ import '../data/database.dart';
 import '../data/library.dart';
 import '../library/book_cover.dart';
 import '../theme/tokens.dart';
+import 'reading_goals.dart';
 import 'reading_stats.dart';
 import 'recap_card.dart';
 
@@ -91,6 +92,10 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
                 rangeChip(_range == _Range.custom ? period.label : 'Choose dates…', _Range.custom, onTap: _pickDates),
               ],
             ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.gutter, Space.sm, Space.gutter, 0),
+            child: GoalsCard(sessions: sessions, books: books.values.toList()),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(Space.gutter, Space.md, Space.gutter, 0),

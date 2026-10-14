@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import '../data/database.dart';
 import '../data/library.dart' show sortableAuthor, sortableTitle;
 import '../storage/local_store.dart';
+import '../storage/synced_setting.dart';
 import 'drive_store.dart';
 
 /// What a sync brought and sent, for the sync screen's progress line.
@@ -249,6 +250,15 @@ class SyncEngine {
         _user,
         {'settings': settings, 'settingsUpdatedAt': Timestamp.now()},
       ));
+    }
+
+    for (final setting in SyncedSetting.all) {
+      if (setting.changedAt(store).isAfter(since)) {
+        writes.add((
+          _user,
+          {setting.field: setting.read(store), '${setting.field}UpdatedAt': Timestamp.now()},
+        ));
+      }
     }
 
     // The Drive upload limit is the account's, not the phone's.
@@ -549,6 +559,12 @@ class SyncEngine {
     if (remoteSettings is Map && remoteAt != null && remoteAt.isAfter(localAt)) {
       await store.writeJson('reader.preferences', remoteSettings);
       await store.writeJson('settings.changedAt', remoteAt.millisecondsSinceEpoch);
+    }
+    for (final setting in SyncedSetting.all) {
+      final at = (user.data()?['${setting.field}UpdatedAt'] as Timestamp?)?.toDate();
+      if (at != null && at.isAfter(setting.changedAt(store))) {
+        await setting.receive(store, user.data()?[setting.field], at);
+      }
     }
     final limitAt = (user.data()?['uploadLimitUpdatedAt'] as Timestamp?)?.toDate();
     final localLimitAt = DateTime.fromMillisecondsSinceEpoch(store.readJson(limitChangedKey) as int? ?? 0);

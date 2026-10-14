@@ -346,6 +346,13 @@ String pageRanges(List<(int, int)> ranges, {int shown = 3}) {
   return ranges.length > shown ? 'pg $listed +${ranges.length - shown} more' : 'pg $listed';
 }
 
+/// "18 min · pg 42–61 · 3 words saved": a sitting just finished.
+String sittingRecap({required int seconds, int? fromPage, int? toPage, int words = 0}) => [
+  formatDuration(seconds),
+  if (fromPage != null && toPage != null && toPage > fromPage) 'pg $fromPage–$toPage',
+  if (words > 0) '$words ${words == 1 ? 'word' : 'words'} saved',
+].join(' · ');
+
 /// "3 h 20 min", "45 min", "under a minute".
 String formatDuration(int seconds) {
   final minutes = (seconds / 60).round();

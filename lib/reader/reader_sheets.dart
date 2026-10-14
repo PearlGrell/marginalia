@@ -632,6 +632,12 @@ class ReaderSettingsList extends ConsumerWidget {
           value: prefs.showClock,
           onChanged: (on) => notifier.update((p) => p.copyWith(showClock: on)),
         ),
+        _Toggle(
+          title: 'Brightness on the left edge',
+          subtitle: 'Slide up or down along the page’s left edge',
+          value: prefs.brightnessSwipe,
+          onChanged: (on) => notifier.update((p) => p.copyWith(brightnessSwipe: on)),
+        ),
 
         // ---- Reading ----
         section('Reading'),

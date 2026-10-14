@@ -821,6 +821,17 @@ class AppDatabase extends _$AppDatabase {
         ..orderBy([(w) => OrderingTerm.desc(w.createdAt)]))
       .watch();
 
+  /// Words saved from [bookId] since [since].
+  Future<int> countWords(String bookId, {required DateTime since}) async {
+    final count = words.id.count();
+    final query = selectOnly(words)
+      ..addColumns([count])
+      ..where(
+        words.deleted.equals(false) & words.bookId.equals(bookId) & words.createdAt.isBiggerOrEqualValue(since),
+      );
+    return (await query.getSingle()).read(count) ?? 0;
+  }
+
   /// Words due for review at [now], the longest overdue first.
   Future<List<VocabularyWord>> dueWords(DateTime now) => (select(words)
         ..where((w) => w.deleted.equals(false) & w.dueAt.isSmallerOrEqualValue(now))

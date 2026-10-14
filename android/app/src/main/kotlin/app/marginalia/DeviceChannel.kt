@@ -45,6 +45,28 @@ class DeviceChannel(
                 }
                 result.success(null)
             }
+            "setBrightness" -> {
+                // The reader's own brightness, for this window only; null goes back to the phone's.
+                val value = call.argument<Double>("value")
+                activity.window.attributes = activity.window.attributes.apply {
+                    screenBrightness = value?.toFloat()?.coerceIn(0.01f, 1f)
+                        ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                }
+                result.success(null)
+            }
+            "brightness" -> {
+                val own = activity.window.attributes.screenBrightness
+                val value = if (own >= 0) {
+                    own
+                } else {
+                    android.provider.Settings.System.getInt(
+                        activity.contentResolver,
+                        android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                        128,
+                    ) / 255f
+                }
+                result.success(value.toDouble())
+            }
             "deviceName" -> {
                 val maker = android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
                 val model = android.os.Build.MODEL

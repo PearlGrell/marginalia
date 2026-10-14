@@ -10,6 +10,8 @@ import '../cloud/account.dart';
 import '../cloud/sync_screen.dart' show AppMark;
 import '../data/database.dart';
 import '../data/library.dart';
+import '../stats/reading_goals.dart';
+import '../stats/streak_reminder.dart';
 import '../reader/reader_sheets.dart';
 import '../theme/tokens.dart';
 import 'app_settings.dart';
@@ -104,6 +106,37 @@ class SettingsScreen extends ConsumerWidget {
             title: 'Your reading',
             subtitle: 'Time read, streaks, and a recap to share',
             onTap: () => context.push('/stats'),
+          ),
+          _NavTile(
+            icon: Icons.flag_outlined,
+            title: 'Reading goals',
+            subtitle: 'Minutes a day and books a year',
+            onTap: () => editGoals(context, ref),
+          ),
+          Consumer(
+            builder: (context, ref, _) {
+              final reminder = ref.watch(streakReminderProvider);
+              final notifier = ref.read(streakReminderProvider.notifier);
+              return ListTile(
+                leading: const Icon(Icons.notifications_outlined),
+                title: const Text('Evening reminder'),
+                subtitle: Text(
+                  reminder.enabled
+                      ? 'At ${reminder.time.format(context)} if you haven’t read yet. Tap to change the time'
+                      : 'A nudge when your streak is about to end',
+                ),
+                trailing: Switch(
+                  value: reminder.enabled,
+                  onChanged: (on) => notifier.set(StreakReminder(enabled: on, minuteOfDay: reminder.minuteOfDay)),
+                ),
+                onTap: () async {
+                  final time = await showTimePicker(context: context, initialTime: reminder.time);
+                  if (time != null) {
+                    await notifier.set(StreakReminder(enabled: true, minuteOfDay: time.hour * 60 + time.minute));
+                  }
+                },
+              );
+            },
           ),
 
           section('Downloads'),

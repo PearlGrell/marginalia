@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/database.dart';
+import '../reader/dictionary_sheet.dart';
 import '../data/library.dart';
 import '../theme/tokens.dart';
 import 'review.dart';
@@ -106,7 +107,23 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(word.word, style: text.displaySmall),
+                        Row(
+                          children: [
+                            Expanded(child: Text(word.word, style: text.displaySmall)),
+                            // The full entry, for a word that needs more than the saved meaning.
+                            IconButton(
+                              tooltip: 'Look it up',
+                              icon: const Icon(Icons.menu_book_outlined),
+                              onPressed: () => showDefinitionSheet(
+                                context,
+                                word.word,
+                                language: word.language,
+                                bookId: word.bookId,
+                                sentence: word.context,
+                              ),
+                            ),
+                          ],
+                        ),
                         if (word.partOfSpeech case final pos?)
                           Text(pos, style: text.titleSmall?.copyWith(fontStyle: FontStyle.italic, color: scheme.onSurfaceVariant)),
                         if (word.context case final ctx? when ctx.isNotEmpty) ...[

@@ -18,6 +18,7 @@ import '../theme/app_theme.dart';
 import '../theme/reader_theme.dart';
 import '../theme/system_bars.dart';
 import '../theme/tokens.dart';
+import '../util/root_messenger.dart';
 import 'device_controls.dart';
 import 'page_turn/page_turner.dart';
 import 'page_turn/turn_painters.dart';
@@ -260,7 +261,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     // The book closes with the reader, so reading aloud stops too.
     if (_listen.isActive) _listen.stop();
     _lifecycle.dispose();
-    _endSession();
+    _endSession(recap: true);
     _clock?.cancel();
     _controller?.dispose();
     _device.dispose();
@@ -317,7 +318,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
-  void _endSession() {
+  /// Ends the sitting; with [recap] (closing the book), says what it came to.
+  void _endSession({bool recap = false}) {
     final session = _session;
     _session = null;
     if (session == null) return;
@@ -325,7 +327,22 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       DateTime.now(),
       deviceName: ref.read(localStoreProvider).readJson('device.name') as String?,
     );
-    if (record != null) _db.saveSession(record);
+    if (record == null) return;
+    _db.saveSession(record);
+    if (recap) _showRecap(session);
+  }
+
+  Future<void> _showRecap(SessionRecorder session) async {
+    final words = await _db.countWords(session.bookId, since: session.startedAt);
+    final text = sittingRecap(
+      seconds: session.active.inSeconds,
+      fromPage: session.startPosition,
+      toPage: session.endPosition,
+      words: words,
+    );
+    rootMessenger.currentState
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text('This sitting: $text')));
   }
 
   /// Times each step forward through the book to estimate time left.
@@ -818,6 +835,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             onSelectionActive: (active) => setState(() => _selecting = active),
           ),
         ),
+        if (prefs.brightnessSwipe && !prefs.scroll && !_selecting)
+          Positioned.fill(child: _BrightnessEdge(device: _device, theme: theme)),
         Positioned(
           top: 0,
           right: Space.gutter,
@@ -1237,5 +1256,94 @@ class _ClockState extends State<_Clock> {
       alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
     );
     return Text(time, style: widget.style, maxLines: 1);
+  }
+}
+
+/// A strip down the page's left edge: sliding along it sets the screen's brightness, with
+/// the level showing while it moves.
+class _BrightnessEdge extends StatefulWidget {
+  const _BrightnessEdge({required this.device, required this.theme});
+
+  final DeviceControls device;
+  final PageColors theme;
+
+  @override
+  State<_BrightnessEdge> createState() => _BrightnessEdgeState();
+}
+
+class _BrightnessEdgeState extends State<_BrightnessEdge> {
+  /// The brightness being set, while sliding.
+  double? _level;
+  double _start = 0.5;
+  double _travel = 0;
+
+  Future<void> _begin() async {
+    _travel = 0;
+    _start = _level ?? await widget.device.brightness();
+    if (mounted) setState(() => _level = _start);
+  }
+
+  void _move(DragUpdateDetails details) {
+    if (_level == null) return;
+    // Up is brighter; the full range is most of the screen's height.
+    _travel -= details.delta.dy / (context.size!.height * 0.7);
+    final level = (_start + _travel).clamp(0.01, 1.0);
+    setState(() => _level = level);
+    widget.device.setBrightness(level);
+  }
+
+  void _end() {
+    Future<void>.delayed(const Duration(milliseconds: 700), () {
+      if (mounted) setState(() => _level = null);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final level = _level;
+    final theme = widget.theme;
+    return Stack(
+      children: [
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 28,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onVerticalDragStart: (_) => _begin(),
+            onVerticalDragUpdate: _move,
+            onVerticalDragEnd: (_) => _end(),
+            onVerticalDragCancel: _end,
+          ),
+        ),
+        Center(
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: level == null ? 0 : 1,
+              duration: Motion.quick,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
+                decoration: BoxDecoration(
+                  color: theme.ink.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(Radii.lg),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.brightness_6_outlined, size: 18, color: theme.page),
+                    const SizedBox(width: Space.sm),
+                    Text(
+                      '${((level ?? 0) * 100).round()}%',
+                      style: TextStyle(fontFamily: FontFamilies.ui, color: theme.page, fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }

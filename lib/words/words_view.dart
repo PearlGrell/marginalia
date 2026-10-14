@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../data/database.dart';
+import '../reader/dictionary_sheet.dart';
 import '../theme/tokens.dart';
 import 'word_store.dart';
 
@@ -31,7 +32,10 @@ List<Widget> wordSlivers(BuildContext context, WidgetRef ref, {required String q
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(due == 0 ? 'All caught up' : '$due ${due == 1 ? 'word' : 'words'} to review', style: text.titleMedium),
+                    Text(
+                      due == 0 ? 'All caught up' : '$due ${due == 1 ? 'word' : 'words'} to review',
+                      style: text.titleMedium,
+                    ),
                     Text(
                       'Words come back just before you would forget them.',
                       style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
@@ -99,39 +103,57 @@ class _WordTile extends ConsumerWidget {
         child: const Icon(Icons.delete_outline),
       ),
       onDismissed: (_) => ref.read(wordStoreProvider).remove(word.id),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: Space.gutter, vertical: Space.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(word.word, style: text.titleMedium),
-                if (word.partOfSpeech case final pos?) ...[
-                  const SizedBox(width: Space.sm),
-                  Text(pos, style: text.bodySmall?.copyWith(fontStyle: FontStyle.italic, color: muted)),
+      // A tap shows the whole entry, where any word in it can be looked up in turn.
+      child: InkWell(
+        onTap: () => showDefinitionSheet(
+          context,
+          word.word,
+          language: word.language,
+          bookId: word.bookId,
+          sentence: word.context,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Space.gutter, vertical: Space.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(word.word, style: text.titleMedium),
+                  if (word.partOfSpeech case final pos?) ...[
+                    const SizedBox(width: Space.sm),
+                    Text(
+                      pos,
+                      style: text.bodySmall?.copyWith(fontStyle: FontStyle.italic, color: muted),
+                    ),
+                  ],
+                  const Spacer(),
+                  if (learned) Icon(Icons.verified_outlined, size: 16, color: muted),
+                  if (word.language != 'en')
+                    Padding(
+                      padding: const EdgeInsets.only(left: Space.xs),
+                      child: Text(word.language.toUpperCase(), style: text.labelSmall),
+                    ),
                 ],
-                const Spacer(),
-                if (learned) Icon(Icons.verified_outlined, size: 16, color: muted),
-                if (word.language != 'en')
-                  Padding(
-                    padding: const EdgeInsets.only(left: Space.xs),
-                    child: Text(word.language.toUpperCase(), style: text.labelSmall),
-                  ),
-              ],
-            ),
-            if (word.definition case final d?) Text(d, style: text.bodyMedium, maxLines: 3, overflow: TextOverflow.ellipsis),
-            if (word.context case final c? when c.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: Space.xxs),
-                child: Text(
-                  c,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.bodySmall?.copyWith(fontFamily: FontFamilies.reading, fontStyle: FontStyle.italic, color: muted),
-                ),
               ),
-          ],
+              if (word.definition case final d?)
+                Text(d, style: text.bodyMedium, maxLines: 3, overflow: TextOverflow.ellipsis),
+              if (word.context case final c? when c.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: Space.xxs),
+                  child: Text(
+                    c,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(
+                      fontFamily: FontFamilies.reading,
+                      fontStyle: FontStyle.italic,
+                      color: muted,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

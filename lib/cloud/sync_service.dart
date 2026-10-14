@@ -12,6 +12,7 @@ import 'package:workmanager/workmanager.dart';
 import '../data/database.dart';
 import '../data/library.dart';
 import '../reader/reader_preferences.dart';
+import '../stats/reading_goals.dart';
 import '../storage/local_store.dart';
 import 'account.dart';
 import 'drive_store.dart';
@@ -167,6 +168,7 @@ class SyncController extends Notifier<SyncStatus> {
       // Settings and the upload limit may have arrived from another device.
       ref.invalidate(readerPreferencesProvider);
       ref.invalidate(uploadLimitProvider);
+      ref.invalidate(readingGoalsProvider);
       state = SyncStatus(report: report, steps: [...steps], lastSyncedAt: now);
       return report;
     } on TimeoutException {

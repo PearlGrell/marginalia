@@ -21,6 +21,7 @@ import 'library/watched_folders.dart';
 import 'notes/notes_screen.dart';
 import 'reader/reader_screen.dart';
 import 'theme/app_theme.dart';
+import 'util/root_messenger.dart';
 import 'settings/app_settings.dart';
 import 'settings/downloads_screen.dart';
 import 'settings/settings_screen.dart';
@@ -306,6 +307,7 @@ class MarginaliaApp extends ConsumerWidget {
       darkTheme: AppTheme.dark(),
       themeMode: ref.watch(appThemeModeProvider),
       routerConfig: _router,
+      scaffoldMessengerKey: rootMessenger,
       // Screens without an app bar still need the bars to match the app theme.
       builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
         value: systemBarsFor(Theme.of(context).brightness),
