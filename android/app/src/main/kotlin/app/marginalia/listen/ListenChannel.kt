@@ -29,6 +29,10 @@ import org.json.JSONObject
 import org.readium.navigator.media.common.MediaNavigator
 import org.readium.navigator.media.tts.TtsNavigator
 import org.readium.navigator.media.tts.TtsNavigatorFactory
+import org.readium.navigator.media.tts.android.AndroidTtsEngine
+import org.readium.navigator.media.tts.android.AndroidTtsEngineProvider
+import org.readium.navigator.media.tts.android.AndroidTtsPreferences
+import org.readium.navigator.media.tts.android.AndroidTtsSettings
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
@@ -36,16 +40,17 @@ import org.readium.r2.shared.util.Language
 import org.readium.r2.shared.util.getOrElse
 
 /**
- * Reading a book aloud with Kokoro's voices (`marginalia/listen`):
- * - `start {publicationId, locator?, speed, speaker?, language?}` → true; errors
- *   `not_installed` (the voices aren't downloaded), `unsupported_language`, `unsupported`
+ * Reading a book aloud with the phone's own text-to-speech, as Leigha or Alex (see
+ * [Narrators]) (`marginalia/listen`):
+ * - `start {publicationId, locator?, speed, narrator?, language?}` → true; errors
+ *   `no_voice` (the phone has no voice for the book's language), `unsupported`
  * - `play`, `pause`, `nextSentence`, `previousSentence`, `nextChapter`, `previousChapter`,
  *   `goTo {locator}` (reads on from a tapped line: from the sentence in the locator's text)
  *
  * A locator given to `start` or `goTo` with a sentence as its text starts at that sentence,
  * not at the beginning of its paragraph.
- * - `setSpeed {speed}` (0.5 to 3), `voices` → `[{id, name, language, selected}]`,
- *   `setVoice {id}`
+ * - `setSpeed {speed}` (0.5 to 3), `voices` → `[{id, name, selected}]` (the narrators this
+ *   book can have), `setVoice {id}` ("leigha" or "alex")
  * - `stop`
  *
  * Calls Dart with `onUtterance {locator, text}` for each sentence (to highlight it and turn
@@ -63,9 +68,14 @@ class ListenChannel(
         it.setMethodCallHandler(this)
     }
 
-    private var navigator: TtsNavigator<KokoroSettings, KokoroPreferences, KokoroError, KokoroVoice>? = null
+    private var navigator: TtsNavigator<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice>? = null
     private var publication: Publication? = null
-    private var preferences = KokoroPreferences()
+    private var preferences = AndroidTtsPreferences()
+
+    /** The book's narrators, and who is reading. */
+    private var narrators: Map<Narrator, AndroidTtsEngine.Voice> = emptyMap()
+    private var narrator = Narrator.Leigha
+    private var bookLanguage = "en"
     private var controller: ListenableFuture<MediaController>? = null
     private var observers: Job? = null
 
@@ -93,31 +103,24 @@ class ListenChannel(
                 seek(navigator, locator)
             }
             "setSpeed" -> {
-                preferences = preferences.copy(speed = call.argument<Double>("speed") ?: 1.0)
+                preferences = AndroidTtsPreferences(
+                    language = preferences.language,
+                    pitch = preferences.pitch,
+                    speed = call.argument<Double>("speed") ?: 1.0,
+                    voices = preferences.voices,
+                )
                 navigator.submitPreferences(preferences)
             }
-            "voices" -> {
-                // Only voices that speak this book's language.
-                val bookLanguages = bookLanguages().map { it.removeRegion().code }.toSet()
-                val chosen = navigator.settings.value.speaker
-                return result.success(
-                    navigator.voices
-                        .filter { bookLanguages.isEmpty() || it.language.removeRegion().code in bookLanguages }
-                        .sortedBy { it.speaker }
-                        .map {
-                            mapOf(
-                                "id" to it.speaker.toString(),
-                                "name" to it.name,
-                                "language" to it.language.code,
-                                "selected" to (it.speaker == chosen),
-                            )
-                        },
-                )
-            }
+            "voices" -> return result.success(
+                Narrator.entries.filter { it in narrators }.map {
+                    mapOf("id" to it.id, "name" to it.label, "selected" to (it == narrator))
+                },
+            )
             "setVoice" -> {
-                val speaker = call.argument<String>("id")?.toIntOrNull()
-                if (speaker != null) {
-                    preferences = preferences.copy(speaker = speaker)
+                val chosen = Narrator.byId(call.argument<String>("id"))
+                if (chosen != null && chosen in narrators) {
+                    narrator = chosen
+                    preferences = preferences.withNarrator()
                     navigator.submitPreferences(preferences)
                 }
             }
@@ -130,25 +133,15 @@ class ListenChannel(
         val publication = call.argument<String>("publicationId")?.let(repository::get)
             ?: return result.error("bad_args", "The book is not open", null)
         val locator = call.argument<String>("locator")?.let { Locator.fromJSON(JSONObject(it)) }
-        val language = call.argument<String>("language") ?: publication.metadata.languages.firstOrNull()
-        if (!Kokoro.isInstalled(activity)) {
-            return result.error("not_installed", "Download the voices in Settings → Downloads.", null)
-        }
-        if (!Kokoro.supports(language)) {
-            return result.error("unsupported_language", "There are no voices for this book's language yet.", null)
-        }
+        val language = call.argument<String>("language") ?: publication.metadata.languages.firstOrNull() ?: "en"
         stop()
         askForNotifications()
-        preferences = KokoroPreferences(
-            speed = call.argument<Double>("speed") ?: 1.0,
-            speaker = call.argument<Int>("speaker") ?: Kokoro.defaultSpeaker(language),
-        )
+        bookLanguage = language
+        narrator = Narrator.byId(call.argument<String>("narrator")) ?: Narrator.Leigha
+        preferences = AndroidTtsPreferences(speed = call.argument<Double>("speed") ?: 1.0)
 
         scope.launch {
-            val provider = KokoroEngineProvider(activity.applicationContext, language) {
-                this@ListenChannel.navigator?.location?.value?.utteranceLocator
-            }
-            val navigator = TtsNavigatorFactory(activity.application, publication, provider, provider.tokenizerFactory)
+            val navigator = TtsNavigatorFactory(activity.application, publication, AndroidTtsEngineProvider(activity.application))
                 ?.createNavigator(
                     listener = object : TtsNavigator.Listener {
                         override fun onStopRequested() = stop()
@@ -158,6 +151,18 @@ class ListenChannel(
                 )
                 ?.getOrElse { null }
                 ?: return@launch result.error("unsupported", "This book can't be read aloud.", null)
+            narrators = narratorsFor(navigator.voices, language)
+            if (narrators.isEmpty()) {
+                navigator.close()
+                return@launch result.error(
+                    "no_voice",
+                    "Your phone has no voice for this book's language. Add one in Android's text-to-speech settings.",
+                    null,
+                )
+            }
+            if (narrator !in narrators) narrator = narrators.keys.first()
+            preferences = preferences.withNarrator()
+            navigator.submitPreferences(preferences)
             this@ListenChannel.navigator = navigator
             this@ListenChannel.publication = publication
             observe(navigator)
@@ -206,7 +211,7 @@ class ListenChannel(
      * it again from the top.
      */
     private fun seek(
-        navigator: TtsNavigator<KokoroSettings, KokoroPreferences, KokoroError, KokoroVoice>,
+        navigator: TtsNavigator<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice>,
         locator: Locator?,
         sentence: String? = locator?.text?.highlight,
     ) {
@@ -239,8 +244,23 @@ class ListenChannel(
         }
     }
 
-    private fun bookLanguages(): List<Language> =
-        publication?.metadata?.languages.orEmpty().map { Language(it) }
+    /** Leigha's and Alex's voices for [language], from the phone's. */
+    private fun narratorsFor(voices: Set<AndroidTtsEngine.Voice>, language: String): Map<Narrator, AndroidTtsEngine.Voice> {
+        val byName = voices.associateBy { it.id.value }
+        val infos = voices.map { VoiceInfo(it.id.value, it.language.code, it.quality.ordinal, it.requiresNetwork) }
+        val region = activity.resources.configuration.locales[0].country
+        val picked = Narrators.pick(infos, language, region)
+        android.util.Log.i("Listen", "Narrators for $language: ${picked.mapValues { it.value.name }}")
+        return picked.mapNotNull { (n, info) -> byName[info.name]?.let { n to it } }.toMap()
+    }
+
+    /** These preferences, read by the chosen narrator (for the book's language with or without its region). */
+    private fun AndroidTtsPreferences.withNarrator(): AndroidTtsPreferences {
+        val voice = narrators[narrator] ?: return this
+        val book = Language(bookLanguage)
+        val keys = setOf(book, book.removeRegion(), voice.language, voice.language.removeRegion())
+        return AndroidTtsPreferences(language = language, pitch = pitch, speed = speed, voices = keys.associateWith { voice.id })
+    }
 
     private fun skipChapter(navigator: TtsNavigator<*, *, *, *>, step: Int) {
         val items = navigator.readingOrder.items

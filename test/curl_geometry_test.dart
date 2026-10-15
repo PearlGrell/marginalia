@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -13,8 +12,8 @@ void main() {
 
   test('a fully turned page is entirely off screen', () {
     final g = CurlGeometry.at(size: size, progress: 1, cornerY: 400)!;
-    // Every point of the page lies past the axis by more than the cylinder's projected
-    // width, so the shader draws nothing of it.
+    // Every point of the page lies past the fold, clear of its shading, so the shader draws
+    // nothing of it.
     for (final corner in const [Offset(0, 0), Offset(0, 800), Offset(400, 0), Offset(400, 800)]) {
       final x = (corner - g.axisPoint).dx * g.axisDir.dx + (corner - g.axisPoint).dy * g.axisDir.dy;
       expect(x, greaterThan(g.radius));
@@ -28,11 +27,11 @@ void main() {
     expect(g.axisPoint.dx, inInclusiveRange(100, 250));
   });
 
-  test('the radius grows with the turn and is capped', () {
+  test('the fold softens as the page lifts, up to a limit', () {
     final early = CurlGeometry.at(size: size, progress: 0.02, cornerY: 400)!;
     final later = CurlGeometry.at(size: size, progress: 0.6, cornerY: 400)!;
     expect(early.radius, lessThan(later.radius));
-    expect(later.radius, lessThanOrEqualTo(math.max(18, 400 * 0.09)));
+    expect(later.radius, lessThanOrEqualTo(CurlGeometry.maxRadiusFor(400)));
   });
 
   test('a page taken by its bottom corner and lifted folds on a slant', () {

@@ -70,12 +70,10 @@ dependencies {
     implementation("androidx.media3:media3-session:1.10.0")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.palette:palette-ktx:1.0.0")
-    // Kokoro voices, run on the phone (the model itself is downloaded in the app).
-    implementation("com.github.k2-fsa:sherpa-onnx:v1.12.14")
     // The reading companion: Gemini Nano on the phone (AICore), through ML Kit.
     implementation("com.google.mlkit:genai-prompt:1.0.0-beta2")
-    // Unpacking the voice model (.tar.bz2).
-    implementation("org.apache.commons:commons-compress:1.27.1")
+    // ...and Gemma on phones without it, run with MediaPipe (the model is downloaded in the app).
+    implementation("com.google.mediapipe:tasks-genai:0.10.35")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     testImplementation("junit:junit:4.13.2")

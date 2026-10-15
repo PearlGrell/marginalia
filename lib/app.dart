@@ -159,6 +159,26 @@ final _router = GoRouter(
       builder: (context, state) => const SettingsScreen(),
     ),
     GoRoute(
+      path: '/settings/appearance',
+      parentNavigatorKey: _rootNavigator,
+      builder: (context, state) => const AppearanceSettingsScreen(),
+    ),
+    GoRoute(
+      path: '/settings/reading',
+      parentNavigatorKey: _rootNavigator,
+      builder: (context, state) => const ReadingSettingsScreen(),
+    ),
+    GoRoute(
+      path: '/settings/goals',
+      parentNavigatorKey: _rootNavigator,
+      builder: (context, state) => const GoalsSettingsScreen(),
+    ),
+    GoRoute(
+      path: '/settings/library',
+      parentNavigatorKey: _rootNavigator,
+      builder: (context, state) => const LibrarySettingsScreen(),
+    ),
+    GoRoute(
       path: '/settings/shared',
       parentNavigatorKey: _rootNavigator,
       builder: (context, state) => const SharedByYouScreen(),

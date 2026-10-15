@@ -7,7 +7,6 @@ import android.view.KeyEvent
 import androidx.fragment.app.commitNow
 import app.marginalia.library.LibraryChannel
 import app.marginalia.listen.ListenChannel
-import app.marginalia.listen.VoicesChannel
 import app.marginalia.readium.PublicationRepository
 import app.marginalia.readium.ReadiumChannel
 import app.marginalia.readium.ReaderPlatformView
@@ -26,7 +25,6 @@ class MainActivity : FlutterFragmentActivity() {
     private var deviceChannel: DeviceChannel? = null
     private var libraryChannel: LibraryChannel? = null
     private var listenChannel: ListenChannel? = null
-    private var voicesChannel: VoicesChannel? = null
     private var companionChannel: CompanionChannel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,6 +35,23 @@ class MainActivity : FlutterFragmentActivity() {
             supportFragmentManager.fragmentFactory = EpubNavigatorFragment.createDummyFactory()
         }
         super.onCreate(savedInstanceState)
+        // Full screen while reading, the page goes up beside the notch (the reader keeps the
+        // clock there) instead of stopping under a black strip. Android 15+ does this anyway.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        // Listen used to read with Kokoro, a 330 MB voice model downloaded into the app; it now
+        // uses the phone's own voices, so any copy left behind goes.
+        java.io.File(filesDir, "kokoro").takeIf { it.exists() }?.let { kokoro ->
+            Thread { kokoro.deleteRecursively() }.start()
+        }
+        // Gemma used to run with LiteRT-LM from a .litertlm file (557 MB); it's a .task file
+        // now, so an old one, and the weight cache made beside it, go.
+        java.io.File(filesDir, "models").listFiles { f -> f.name.contains(".litertlm") }?.let { old ->
+            Thread { old.forEach { it.delete() } }.start()
+        }
         val stale = supportFragmentManager.fragments.filter {
             it.tag?.startsWith(ReaderPlatformView.FRAGMENT_TAG_PREFIX) == true
         }
@@ -88,8 +103,7 @@ class MainActivity : FlutterFragmentActivity() {
         libraryChannel = LibraryChannel(messenger, this, repository)
         deliverPendingFile()
         listenChannel = ListenChannel(messenger, this, repository)
-        voicesChannel = VoicesChannel(messenger, this)
-        companionChannel = CompanionChannel(messenger)
+        companionChannel = CompanionChannel(messenger, applicationContext)
         flutterEngine.platformViewsController.registry.registerViewFactory(
             ReaderViewFactory.VIEW_TYPE,
             ReaderViewFactory(this, messenger, repository),
@@ -108,8 +122,6 @@ class MainActivity : FlutterFragmentActivity() {
         libraryChannel = null
         listenChannel?.dispose()
         listenChannel = null
-        voicesChannel?.dispose()
-        voicesChannel = null
         companionChannel?.dispose()
         companionChannel = null
         repository.closeAll()

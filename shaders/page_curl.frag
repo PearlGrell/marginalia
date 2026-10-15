@@ -1,99 +1,71 @@
 #version 460 core
 
-// Page curl: the page wraps around a cylinder lying on the page.
+// Page turn: the page folds back flat along a line, like a sheet of paper turned over.
 //
-// In the axis frame, x is the distance past the curl axis along uAxisDir (towards the
-// lifted edge). The paper at arc length s past the axis sits on the cylinder for
-// s in [0, πr] and lies flat, face down, on top of the page for s > πr. For each fragment,
-// candidates are tried from the topmost layer down:
-//   1. the flat turned-over flap (back of the page)   x < 0,  s = πr - x
-//   2. the top half of the cylinder (back of the page) 0 ≤ x < r, s = r(π - asin(x/r))
-//   3. the bottom half of the cylinder (front)         0 ≤ x < r, s = r·asin(x/r)
-//   4. the untouched page (front)                      x < 0,  s = x
-// Anything else shows the page underneath (transparent), with the curl's shadow on it.
+// In the fold frame, x is the distance past the fold line along uAxisDir (towards the
+// lifted edge). Paper past the fold (x > 0) has been lifted off; it lies face down on the
+// page, mirrored across the fold, at s = p - 2x·n. So for each fragment:
+//   1. the turned-over flap (plain back of the page)   x < 0, s inside the page
+//   2. the untouched page (front)                      x < 0
+//   3. the next page showing through (transparent)     x ≥ 0
+// There is no roll: the bend is only suggested by shading across the flap near the fold.
+// Colors are premultiplied; the layers are composited with antialiased edges.
 
 #include <flutter/runtime_effect.glsl>
 
 precision highp float;
 
 uniform vec2 uSize;       // page size in logical pixels
-uniform vec2 uAxisPoint;  // a point on the curl axis
-uniform vec2 uAxisDir;    // unit vector perpendicular to the axis, towards the lifted edge
-uniform float uRadius;    // cylinder radius
+uniform vec2 uAxisPoint;  // a point on the fold line
+uniform vec2 uAxisDir;    // unit vector perpendicular to the fold, towards the lifted edge
+uniform float uRadius;    // softness of the fold's shading and shadows
 uniform vec4 uBackColor;  // color of the back of the paper
 uniform float uShadow;    // shadow strength, 0 to 1
 uniform sampler2D uPage;  // snapshot of the turning page
 
 out vec4 fragColor;
 
-const float PI = 3.14159265359;
-
-bool inPage(vec2 p) {
-  return p.x >= 0.0 && p.y >= 0.0 && p.x <= uSize.x && p.y <= uSize.y;
-}
-
-vec4 frontAt(vec2 p, float light) {
-  vec4 c = texture(uPage, p / uSize);
-  return vec4(c.rgb * light, c.a);
-}
-
-// The back of the paper: plain, lit by where it faces. (p is kept so callers read alike.)
-vec4 backAt(vec2 p, float light) {
-  return vec4(uBackColor.rgb * light, 1.0);
-}
-
-// Distance from p to the page rectangle (0 inside).
-float outside(vec2 p) {
-  vec2 d = max(max(-p, p - uSize), vec2(0.0));
-  return length(d);
+// Signed distance from p to the page rectangle: negative inside.
+float pageDistance(vec2 p) {
+  vec2 mid = uSize * 0.5;
+  vec2 d = abs(p - mid) - mid;
+  return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0);
 }
 
 void main() {
   vec2 p = FlutterFragCoord().xy;
   vec2 n = uAxisDir;
-  float r = max(uRadius, 0.001);
+  float soft = max(uRadius, 1.0);
   float x = dot(p - uAxisPoint, n);
-  vec2 base = p - n * x;
 
-  if (x < 0.0) {
-    // 1. The flap lying on top. Slightly darker near the fold, where it lifts off.
-    vec2 s = base + n * (PI * r - x);
-    if (inPage(s)) {
-      float lift = smoothstep(0.0, r * 1.5, -x);
-      fragColor = backAt(s, mix(0.86, 0.97, lift));
-      return;
-    }
-    // 4. The untouched page, with a soft shadow along the flap's edge.
-    vec4 c = frontAt(p, 1.0);
-    float edge = outside(s);
-    float shade = (1.0 - smoothstep(0.0, 10.0, edge)) * 0.18 * uShadow;
-    fragColor = vec4(c.rgb * (1.0 - shade), c.a);
-    return;
-  }
+  // Coverage of everything this side of the fold.
+  float near = clamp(0.5 - x, 0.0, 1.0);
 
-  if (x < r) {
-    float a = asin(clamp(x / r, 0.0, 1.0));
+  // The flap, mirrored across the fold.
+  vec2 s = p - 2.0 * x * n;
+  float sd = pageDistance(s);
+  float flapCover = clamp(0.5 - sd, 0.0, 1.0) * near;
 
-    // 2. Top of the cylinder: the back of the page, lit from above.
-    vec2 sTop = base + n * (r * (PI - a));
-    if (inPage(sTop)) {
-      float up = -cos(PI - a); // 0 at the side of the cylinder, 1 at the top
-      fragColor = backAt(sTop, mix(0.72, 1.0, up));
-      return;
-    }
+  // The untouched page, darkened softly where the flap's free edges lie on it.
+  vec4 front = texture(uPage, p / uSize);
+  float edgeShade = (1.0 - smoothstep(0.0, soft * 0.4 + 4.0, max(sd, 0.0))) * 0.16 * uShadow;
+  front.rgb *= 1.0 - edgeShade;
 
-    // 3. Underside of the cylinder: the front of the page, shaded towards the fold.
-    vec2 sBottom = base + n * (r * a);
-    if (inPage(sBottom)) {
-      float facing = cos(a);
-      fragColor = frontAt(sBottom, mix(0.62, 1.0, facing));
-      return;
-    }
-  }
+  // The next page, with the shadow of the lifted paper along the fold.
+  float t = max(x, 0.0) / (soft * 1.2 + 6.0);
+  float fall = 1.0 - clamp(t, 0.0, 1.0);
+  vec4 shadow = vec4(0.0, 0.0, 0.0, fall * fall * fall * 0.26 * uShadow);
 
-  // The next page shows through; the lifted paper casts a shadow on it.
-  float d = x - r;
-  float width = r * 1.2 + 12.0;
-  float alpha = d > 0.0 ? pow(1.0 - clamp(d / width, 0.0, 1.0), 2.0) * 0.32 * uShadow : 0.0;
-  fragColor = vec4(0.0, 0.0, 0.0, alpha);
+  vec4 under = front * near + shadow * (1.0 - near);
+
+  // The back of the paper: plain, darker right at the fold where it bends away from the
+  // light, then even, falling off a touch towards its free edge.
+  float d = max(-x, 0.0);
+  float light = mix(0.86, 1.0, smoothstep(0.0, soft * 1.6, d));
+  light -= 0.035 * smoothstep(soft * 1.6, soft * 10.0, d);
+  // A faint highlight just past the bend.
+  light += 0.025 * exp(-pow((d - soft * 0.9) / (soft * 0.5), 2.0));
+  vec4 flap = vec4(uBackColor.rgb * light, 1.0) * flapCover;
+
+  fragColor = flap + under * (1.0 - flap.a);
 }

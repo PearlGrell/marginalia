@@ -7,11 +7,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../cloud/sync_service.dart';
 import '../clubs/club_screens.dart';
 import '../clubs/clubs.dart';
+import '../companion/book_memory.dart';
 import '../companion/companion_sheet.dart';
 import '../data/database.dart';
 import '../data/library.dart';
@@ -26,7 +26,6 @@ import 'device_controls.dart';
 import 'page_turn/page_turner.dart';
 import 'page_turn/turn_painters.dart';
 import '../listen/listen_controller.dart';
-import '../listen/kokoro.dart';
 import '../listen/player_bar.dart';
 import '../share/share_sheet.dart' show shareText;
 import '../share/story_card.dart';
@@ -70,6 +69,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Book? _book;
 
   PublicationInfo? _publication;
+
+  /// Keeps the book for the companion as it's read (see [BookKeeper]).
+  BookKeeper? _keeper;
   String? _error;
   ReadiumViewController? _controller;
   ReaderLocation? _location;
@@ -78,6 +80,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   /// What was last drawn, to skip redundant updates.
   String? _sentHighlights;
   bool _chromeVisible = false;
+
+  /// The status bar, pulled down over the page for a moment: the clock steps aside for it.
+  bool _systemBarsShown = false;
 
   /// While dragging the progress slider.
   double? _scrubValue;
@@ -130,6 +135,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _device.setKeepScreenOn(prefs.keepScreenOn);
     _device.setVolumeKeysTurnPages(prefs.volumeKeys);
     _setImmersive(true);
+    SystemChrome.setSystemUIChangeCallback((shown) async {
+      if (mounted && shown != _systemBarsShown) setState(() => _systemBarsShown = shown);
+    });
     // Leaving the app ends the sitting; coming back starts another.
     _lifecycle = AppLifecycleListener(
       onHide: _endSession,
@@ -210,6 +218,19 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         return;
       }
       setState(() => _publication = publication);
+      // The companion keeps the book as it's read, a page at a time (EPUBs: text to keep).
+      if (!publication.isFixedLayout) {
+        final summaries = ref.read(chapterSummariesProvider.notifier);
+        final title = book.title;
+        final authors = book.authors.join(', ');
+        _keeper = BookKeeper(
+          bookId: widget.bookId,
+          publication: publication,
+          title: title,
+          authors: authors,
+          onChapterFinished: (_) => summaries.catchUp(bookId: widget.bookId, title: title, authors: authors),
+        );
+      }
       _startSession();
     } on ReadiumException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -265,8 +286,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     // The book closes with the reader, so reading aloud stops too.
     if (_listen.isActive) _listen.stop();
     _lifecycle.dispose();
+    _keeper?.flush();
+    _keeper?.close();
     _endSession(recap: true);
     _clock?.cancel();
+    SystemChrome.setSystemUIChangeCallback(null);
     _controller?.dispose();
     _device.dispose();
     final id = _publication?.id;
@@ -300,6 +324,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       position: location.position,
     );
     _learnPace(location.position);
+    _keeper?.reached(location);
     setState(() => _location = location);
     _db.updateBook(
       widget.bookId,
@@ -674,14 +699,20 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   /// Who someone is, or a recap: from the book up to this page.
   Future<void> _ask({String? name}) async {
     final publication = _publication;
-    final locator = _location?.locatorJson;
-    if (publication == null || locator == null) return;
+    final keeper = _keeper;
+    final location = _location;
+    final place = location == null ? null : keeper?.placeOf(location);
+    if (publication == null || keeper == null || place == null) return;
     if (_chromeVisible) _toggleChrome();
+    // The page on screen kept first, so the companion has it.
+    await keeper.flush();
+    if (!mounted) return;
     await showCompanionSheet(
       context,
-      publicationId: publication.id,
-      locatorJson: locator,
+      bookId: widget.bookId,
+      place: place,
       title: _book?.title ?? publication.title,
+      authors: _book?.authors.join(', '),
       name: name,
     );
   }
@@ -697,19 +728,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       start,
       language: _book?.language ?? publication.language,
     );
-    if (error == ListenController.needsVoices) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: const Text('Listen needs its voices: a one-time download (${KokoroPack.downloadSizeLabel})'),
-            action: SnackBarAction(label: 'Download', onPressed: () => context.push('/settings/downloads')),
-          ),
-        );
-    } else if (error != null) {
-      _say(error);
-    }
+    if (error != null) _say(error);
   }
 
   /// Sends preferences to the view when what it should render changes, including when the
@@ -760,7 +779,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             children: [
               Column(
                 children: [
-                  if (_publication != null && prefs.showClock) _buildHeader(theme),
+                  if (_publication != null) _buildHeader(theme, showClock: prefs.showClock),
                   Expanded(child: _buildPages(prefs, theme, readium)),
                   if (listening) PlayerBar(theme: theme),
                   if (_publication != null) _buildFooter(theme),
@@ -894,19 +913,35 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
-  /// The time, quiet above the page (the system bars stay hidden while reading).
-  Widget _buildHeader(PageColors theme) {
-    return SafeArea(
-      bottom: false,
-      child: SizedBox(
-        height: 26,
-        child: Center(
-          child: _Clock(
-            style: TextStyle(
-              fontFamily: FontFamilies.ui,
-              fontSize: 11.5,
-              color: theme.muted,
-              fontFeatures: const [ui.FontFeature.tabularFigures()],
+  /// The band above the page: as tall as the notch (or 26 for the clock on phones without
+  /// one), with the time in its corner beside the camera, where the status bar's clock would
+  /// be. The system bars stay hidden while reading; when one is pulled down, the time fades.
+  Widget _buildHeader(PageColors theme, {required bool showClock}) {
+    final inset = MediaQuery.viewPaddingOf(context).top;
+    final height = showClock && inset < 26 ? 26.0 : inset;
+    if (height == 0) return const SizedBox.shrink();
+    if (!showClock) return SizedBox(height: height);
+    // A camera in the left corner: the time goes on the right.
+    final width = MediaQuery.sizeOf(context).width;
+    final cameraLeft = MediaQuery.displayFeaturesOf(context).any(
+      (f) => f.type == ui.DisplayFeatureType.cutout && f.bounds.top <= height && f.bounds.center.dx < width / 3,
+    );
+    return SizedBox(
+      height: height,
+      child: AnimatedOpacity(
+        opacity: _systemBarsShown ? 0 : 1,
+        duration: const Duration(milliseconds: 150),
+        child: Align(
+          alignment: cameraLeft ? Alignment.centerRight : Alignment.centerLeft,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: Space.gutter),
+            child: _Clock(
+              style: TextStyle(
+                fontFamily: FontFamilies.ui,
+                fontSize: 12,
+                color: theme.muted,
+                fontFeatures: const [ui.FontFeature.tabularFigures()],
+              ),
             ),
           ),
         ),
@@ -1124,7 +1159,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                     thumbColor: theme.ink,
                   ),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
                       _ChromeButton(
                         icon: Icons.format_list_bulleted,
@@ -1258,13 +1292,26 @@ class _ChromeButton extends StatelessWidget {
   final Color color;
   final VoidCallback onPressed;
 
+  /// Icon over label, in an equal share of the row: four fit on a narrow phone, at any text size.
   @override
   Widget build(BuildContext context) {
-    return TextButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, size: 20),
-      label: Text(label),
-      style: TextButton.styleFrom(foregroundColor: color),
+    return Expanded(
+      child: TextButton(
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          foregroundColor: color,
+          padding: const EdgeInsets.symmetric(vertical: Space.sm),
+          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 22),
+            const SizedBox(height: 4),
+            Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5)),
+          ],
+        ),
+      ),
     );
   }
 }

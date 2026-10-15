@@ -15,15 +15,6 @@ void main() {
     expect(sentencesOf('He came. “Who?” she asked. Nobody knew!'), ['He came.', '“Who?” she asked.', 'Nobody knew!']);
   });
 
-  test('a name’s first and latest mentions, as a whole word', () {
-    final celia = mentionsOf('celia', book, first: 1, latest: 1);
-    expect(celia.count, 3);
-    expect(celia.first.single, startsWith('Her sister Celia'));
-    expect(celia.latest.single, startsWith('Celia guessed'));
-    // Part of another word isn't a mention.
-    expect(mentionsOf('Dor', book).none, isTrue);
-  });
-
   test('a recap takes its sentences from the latest chapters, in order', () {
     final recap = recapSentences(book, chapters: 2, count: 3);
     expect(recap, hasLength(3));
@@ -32,11 +23,13 @@ void main() {
     expect(positions, orderedEquals([...positions]..sort()));
   });
 
-  test('prompts carry only the passages, and ask for nothing beyond them', () {
-    final prompt = whoPrompt('Celia', 'Middlemarch', mentionsOf('Celia', book));
-    expect(prompt, contains('Middlemarch'));
-    expect(prompt, contains('- Her sister Celia was more worldly.'));
-    expect(prompt, contains('say nothing about anything later in the book'));
-    expect(prompt, isNot(contains('Pascal by heart')));
+  test('answers lose a lead-in and a sentence left unfinished', () {
+    expect(
+      tidyAnswer("Here's a three-to-five-sentence recap: Alice follows the Rabbit. She falls a long way. Then she"),
+      'Alice follows the Rabbit. She falls a long way.',
+    );
+    expect(tidyAnswer('Celia is Dorothea’s younger sister.'), 'Celia is Dorothea’s younger sister.');
+    // Nothing to keep after trimming: the answer as it came.
+    expect(tidyAnswer('Celia is'), 'Celia is');
   });
 }

@@ -27,12 +27,13 @@ class Nano {
     }
   }
 
-  /// Asks the system for it; true once it's ready.
-  Future<bool> download() async {
+  /// Asks the system for it (or waits on a download already under way): ready once it's
+  /// there, or why not.
+  Future<({bool ready, String? error})> download() async {
     try {
-      return await _channel.invokeMethod<bool>('download') ?? false;
-    } on PlatformException {
-      return false;
+      return (ready: await _channel.invokeMethod<bool>('download') ?? false, error: null);
+    } on PlatformException catch (e) {
+      return (ready: false, error: e.message);
     }
   }
 
@@ -56,43 +57,6 @@ List<String> sentencesOf(String text) => [
   for (final s in text.split(_sentenceEnd))
     if (s.trim().isNotEmpty) s.trim(),
 ];
-
-/// Where a name comes up in the book so far: its first sentences there, and the latest.
-class Mentions {
-  const Mentions({required this.count, required this.first, required this.latest});
-
-  /// Sentences that name it.
-  final int count;
-
-  /// Where it's introduced.
-  final List<String> first;
-
-  /// The most recent, in reading order.
-  final List<String> latest;
-
-  bool get none => count == 0;
-
-  List<String> get all => [...first, ...latest];
-}
-
-/// The sentences of [paragraphs] that name [name] (as a whole word, any case).
-Mentions mentionsOf(String name, List<Paragraph> paragraphs, {int first = 3, int latest = 4}) {
-  final words = name.trim();
-  if (words.isEmpty) return const Mentions(count: 0, first: [], latest: []);
-  final pattern = RegExp('(?<![\\p{L}\\p{N}])${RegExp.escape(words)}(?![\\p{L}\\p{N}])', caseSensitive: false, unicode: true);
-  final found = [
-    for (final p in paragraphs)
-      for (final s in sentencesOf(p.text))
-        if (pattern.hasMatch(s)) s,
-  ];
-  final head = found.take(first).toList();
-  final tail = found.skip(head.length).toList();
-  return Mentions(
-    count: found.length,
-    first: head,
-    latest: tail.skip(math.max(0, tail.length - latest)).toList(),
-  );
-}
 
 const _stopwords = {
   'that', 'this', 'with', 'have', 'from', 'they', 'were', 'what', 'when', 'your', 'said', 'there', 'their',
@@ -153,27 +117,25 @@ List<String> recapSentences(List<Paragraph> paragraphs, {int chapters = 2, int c
   return [for (final i in chosen) sentences[i]];
 }
 
-String _passages(Iterable<String> sentences, {int maxChars = 5000}) {
-  final out = StringBuffer();
-  for (final s in sentences) {
-    if (out.length + s.length > maxChars) break;
-    out.writeln('- $s');
+/// A model's [answer], tidied: without a lead-in ("Here's a recap:") or a last sentence it
+/// didn't finish.
+String tidyAnswer(String answer) {
+  var text = answer.trim();
+  // Table rows and rules, and a closing line about the reader's questions: not the answer.
+  text = text
+      .split('\n')
+      .where((line) => !RegExp(r'^\s*\|').hasMatch(line) && !RegExp(r'^\s*[-=*_]{3,}\s*$').hasMatch(line))
+      .join('\n')
+      .trim();
+  text = text.replaceFirst(
+    RegExp(r'[^.!?\n]*\b(questions? (might|would|could)|would you like|anything else|let me know)[^\n]*\?\s*$', caseSensitive: false),
+    '',
+  ).trim();
+  final leadIn = RegExp(r"^(here(?:'|’)?s|here is|sure|okay|ok)\b[^:\n]{0,80}:\s*", caseSensitive: false);
+  text = text.replaceFirst(leadIn, '');
+  if (!RegExp(r'[.!?…]["”’)]?$').hasMatch(text)) {
+    final end = text.lastIndexOf(RegExp(r'[.!?…]["”’)]?\s'));
+    if (end > 0) text = text.substring(0, end + 1);
   }
-  return out.toString();
+  return text.isEmpty ? answer.trim() : text;
 }
-
-/// For the model: who [name] is, from [mentions] only.
-String whoPrompt(String name, String title, Mentions mentions) =>
-    'Someone is reading the book "$title". Below are the passages that mention $name, from the '
-    'start of the book up to where they are reading. Using only these passages, say who $name is '
-    'in two to four sentences: who they are and how they relate to the others. Do not guess, and '
-    'say nothing about anything later in the book.\n\n'
-    'Passages:\n${_passages(mentions.all)}';
-
-/// For the model: what has happened lately, from [sentences] only.
-String recapPrompt(String title, List<String> sentences) =>
-    'Someone is reading the book "$title" and wants a reminder of what has happened in the '
-    'last chapter or two. Below are key sentences from those chapters, in order, up to where they '
-    'are reading. Using only these, recap the story so far in three to five sentences, plainly. Do '
-    'not guess, and say nothing about anything later in the book.\n\n'
-    'Sentences:\n${_passages(sentences)}';

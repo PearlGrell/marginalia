@@ -20,24 +20,17 @@ import 'library_export.dart';
 /// Set by `scripts/deploy-to-phone.ps1`, so you can tell which build is installed.
 const _buildStamp = String.fromEnvironment('BUILD_STAMP', defaultValue: 'dev');
 
+/// Settings: the account, then one line per area, each opening its own page.
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final account = ref.watch(accountProvider);
-    final themeMode = ref.watch(appThemeModeProvider);
-    final text = Theme.of(context).textTheme;
-
-    Widget section(String title) => Padding(
-      padding: const EdgeInsets.fromLTRB(Space.gutter, Space.xl, Space.gutter, Space.sm),
-      child: Text(title.toUpperCase(), style: text.labelSmall),
-    );
-
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
-        padding: const EdgeInsets.only(bottom: Space.xxxl),
+        padding: const EdgeInsets.only(top: Space.sm, bottom: Space.xxxl),
         children: [
           ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: Space.gutter),
@@ -55,116 +48,38 @@ class SettingsScreen extends ConsumerWidget {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => context.push('/account'),
           ),
-
-          if (account.signedIn)
-            _NavTile(
-              icon: Icons.ios_share,
-              title: 'Shared by you',
-              subtitle: 'Books and collections you have shared, and stopping them',
-              onTap: () => context.push('/settings/shared'),
-            ),
-
-          section('Appearance'),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: Space.gutter),
-            child: SegmentedButton<ThemeMode>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(value: ThemeMode.system, label: Text('Match phone')),
-                ButtonSegment(value: ThemeMode.light, label: Text('Light')),
-                ButtonSegment(value: ThemeMode.dark, label: Text('Dark')),
-              ],
-              selected: {themeMode},
-              onSelectionChanged: (s) => ref.read(appThemeModeProvider.notifier).set(s.first),
-            ),
+          const Divider(height: Space.lg),
+          _NavTile(
+            icon: Icons.palette_outlined,
+            title: 'Appearance',
+            subtitle: 'Light, dark or match the phone',
+            onTap: () => context.push('/settings/appearance'),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(Space.gutter, Space.sm, Space.gutter, 0),
-            child: Text(
-              'The app around your books. Pages have their own themes under Reading.',
-              style: text.bodySmall,
-            ),
-          ),
-
-          section('Reading'),
           _NavTile(
             icon: Icons.text_fields,
-            title: 'Page, type and turning',
-            subtitle: 'Themes, fonts, spacing, page turns, volume keys',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => Scaffold(
-                  appBar: AppBar(title: const Text('Reading')),
-                  body: const ReaderSettingsList(inSheet: false),
-                ),
-              ),
-            ),
-          ),
-
-          _NavTile(
-            icon: Icons.insights_outlined,
-            title: 'Your reading',
-            subtitle: 'Time read, streaks, and a recap to share',
-            onTap: () => context.push('/stats'),
+            title: 'Reading',
+            subtitle: 'Page themes, fonts, spacing, page turns, volume keys',
+            onTap: () => context.push('/settings/reading'),
           ),
           _NavTile(
             icon: Icons.flag_outlined,
-            title: 'Reading goals',
-            subtitle: 'Minutes a day and books a year',
-            onTap: () => editGoals(context, ref),
+            title: 'Goals and reminders',
+            subtitle: 'Your reading, goals, the evening reminder',
+            onTap: () => context.push('/settings/goals'),
           ),
-          Consumer(
-            builder: (context, ref, _) {
-              final reminder = ref.watch(streakReminderProvider);
-              final notifier = ref.read(streakReminderProvider.notifier);
-              return ListTile(
-                leading: const Icon(Icons.notifications_outlined),
-                title: const Text('Evening reminder'),
-                subtitle: Text(
-                  reminder.enabled
-                      ? 'At ${reminder.time.format(context)} if you haven’t read yet. Tap to change the time'
-                      : 'A nudge when your streak is about to end',
-                ),
-                trailing: Switch(
-                  value: reminder.enabled,
-                  onChanged: (on) => notifier.set(StreakReminder(enabled: on, minuteOfDay: reminder.minuteOfDay)),
-                ),
-                onTap: () async {
-                  final time = await showTimePicker(context: context, initialTime: reminder.time);
-                  if (time != null) {
-                    await notifier.set(StreakReminder(enabled: true, minuteOfDay: time.hour * 60 + time.minute));
-                  }
-                },
-              );
-            },
-          ),
-
-          section('Downloads'),
           _NavTile(
             icon: Icons.download_outlined,
-            title: 'Dictionary, translation and voices',
-            subtitle: 'Add or remove what works offline',
+            title: 'Downloads',
+            subtitle: 'Dictionary, translation, voices, AI model',
             onTap: () => context.push('/settings/downloads'),
           ),
-
-          section('Library'),
           _NavTile(
-            icon: Icons.folder_special_outlined,
-            title: 'Watched folders',
-            subtitle: 'New EPUBs in these folders join your library',
-            onTap: () => context.push('/settings/folders'),
+            icon: Icons.folder_outlined,
+            title: 'Library and storage',
+            subtitle: 'Watched folders, sharing, export, space used',
+            onTap: () => context.push('/settings/library'),
           ),
-          _NavTile(
-            icon: Icons.archive_outlined,
-            title: 'Export everything',
-            subtitle: 'Books, covers, notes and reading history in one zip',
-            onTap: () => exportLibrary(context, ref),
-          ),
-
-          section('Storage'),
-          const _StorageSection(),
-
-          section('About'),
+          const Divider(height: Space.lg),
           ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: Space.gutter),
             leading: const AppMark(size: 40),
@@ -172,22 +87,184 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: const Text('Build $_buildStamp · licenses and credits'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => showLicensePage(
-              applicationIcon: const Padding(
-                padding: EdgeInsets.all(Space.md),
-                child: AppMark(size: 72),
-              ),
+              applicationIcon: const Padding(padding: EdgeInsets.all(Space.md), child: AppMark(size: 72)),
               context: context,
               applicationName: 'Marginalia',
               applicationVersion: 'Build $_buildStamp',
               applicationLegalese:
                   'Books from Project Gutenberg. Dictionary: Open English WordNet (CC BY 4.0). '
-                  'Translation: Google ML Kit. Fonts: Fraunces, IBM Plex Sans, Literata, '
-                  'Source Serif 4, EB Garamond, Atkinson Hyperlegible (SIL Open Font License). '
-                  'Rendering: Readium.',
+                  'Translation: Google ML Kit. Reading companion: Gemma, provided under and '
+                  'subject to the Gemma Terms of Use (ai.google.dev/gemma/terms). Fonts: '
+                  'Fraunces, IBM Plex Sans, Literata, Source Serif 4, EB Garamond, Atkinson '
+                  'Hyperlegible (SIL Open Font License). Rendering: Readium.',
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// A settings sub page: its title and its rows.
+class _SubPage extends StatelessWidget {
+  const _SubPage({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(title)),
+    body: ListView(
+      padding: const EdgeInsets.only(bottom: Space.xxxl),
+      children: children,
+    ),
+  );
+}
+
+class _Section extends StatelessWidget {
+  const _Section(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(Space.gutter, Space.xl, Space.gutter, Space.sm),
+    child: Text(title.toUpperCase(), style: Theme.of(context).textTheme.labelSmall),
+  );
+}
+
+class AppearanceSettingsScreen extends ConsumerWidget {
+  const AppearanceSettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(appThemeModeProvider);
+    return _SubPage(
+      title: 'Appearance',
+      children: [
+        const _Section('App theme'),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Space.gutter),
+          child: SegmentedButton<ThemeMode>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: ThemeMode.system, label: Text('Match phone')),
+              ButtonSegment(value: ThemeMode.light, label: Text('Light')),
+              ButtonSegment(value: ThemeMode.dark, label: Text('Dark')),
+            ],
+            selected: {themeMode},
+            onSelectionChanged: (s) => ref.read(appThemeModeProvider.notifier).set(s.first),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Space.gutter, Space.sm, Space.gutter, 0),
+          child: Text(
+            'The app around your books. Pages have their own themes under Reading.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+        _NavTile(
+          icon: Icons.text_fields,
+          title: 'Page themes and type',
+          subtitle: 'Under Reading',
+          onTap: () => context.push('/settings/reading'),
+        ),
+      ],
+    );
+  }
+}
+
+class ReadingSettingsScreen extends StatelessWidget {
+  const ReadingSettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Reading')),
+    body: const ReaderSettingsList(inSheet: false),
+  );
+}
+
+class GoalsSettingsScreen extends ConsumerWidget {
+  const GoalsSettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final reminder = ref.watch(streakReminderProvider);
+    final notifier = ref.read(streakReminderProvider.notifier);
+    return _SubPage(
+      title: 'Goals and reminders',
+      children: [
+        const SizedBox(height: Space.sm),
+        _NavTile(
+          icon: Icons.insights_outlined,
+          title: 'Your reading',
+          subtitle: 'Time read, streaks, and a recap to share',
+          onTap: () => context.push('/stats'),
+        ),
+        _NavTile(
+          icon: Icons.flag_outlined,
+          title: 'Reading goals',
+          subtitle: 'Minutes a day and books a year',
+          onTap: () => editGoals(context, ref),
+        ),
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: Space.gutter),
+          leading: const Icon(Icons.notifications_outlined),
+          title: const Text('Evening reminder'),
+          subtitle: Text(
+            reminder.enabled
+                ? 'At ${reminder.time.format(context)} if you haven’t read yet. Tap to change the time'
+                : 'A nudge when your streak is about to end',
+          ),
+          trailing: Switch(
+            value: reminder.enabled,
+            onChanged: (on) => notifier.set(StreakReminder(enabled: on, minuteOfDay: reminder.minuteOfDay)),
+          ),
+          onTap: () async {
+            final time = await showTimePicker(context: context, initialTime: reminder.time);
+            if (time != null) {
+              await notifier.set(StreakReminder(enabled: true, minuteOfDay: time.hour * 60 + time.minute));
+            }
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class LibrarySettingsScreen extends ConsumerWidget {
+  const LibrarySettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final signedIn = ref.watch(accountProvider).signedIn;
+    return _SubPage(
+      title: 'Library and storage',
+      children: [
+        const _Section('Library'),
+        _NavTile(
+          icon: Icons.folder_special_outlined,
+          title: 'Watched folders',
+          subtitle: 'New EPUBs in these folders join your library',
+          onTap: () => context.push('/settings/folders'),
+        ),
+        if (signedIn)
+          _NavTile(
+            icon: Icons.ios_share,
+            title: 'Shared by you',
+            subtitle: 'Books and collections you have shared, and stopping them',
+            onTap: () => context.push('/settings/shared'),
+          ),
+        _NavTile(
+          icon: Icons.archive_outlined,
+          title: 'Export everything',
+          subtitle: 'Books, covers, notes and reading history in one zip',
+          onTap: () => exportLibrary(context, ref),
+        ),
+        const _Section('Storage'),
+        const _StorageSection(),
+      ],
     );
   }
 }

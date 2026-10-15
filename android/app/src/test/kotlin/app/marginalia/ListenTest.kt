@@ -1,9 +1,11 @@
 package app.marginalia
 
-import app.marginalia.listen.clauses
+import app.marginalia.listen.Gender
+import app.marginalia.listen.Narrator
+import app.marginalia.listen.Narrators
+import app.marginalia.listen.VoiceInfo
 import app.marginalia.listen.matchKey
 import app.marginalia.listen.sameSentence
-import app.marginalia.listen.trimSilence
 import app.marginalia.readium.Follow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,28 +13,39 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ListenTest {
+    private fun voice(name: String, quality: Int = 3, network: Boolean = false) =
+        VoiceInfo(name, name.substringBefore("-x-").replace(Regex("^([a-z]+)-([a-z]+)$")) { "${it.groupValues[1]}-${it.groupValues[2].uppercase()}" }, quality, network)
+
     @Test
-    fun shortSentencesStayWhole() {
-        assertEquals(listOf("She left, and he stayed."), clauses("She left, and he stayed."))
+    fun voicesAreToldApartByTheirNames() {
+        assertEquals(Gender.Female, Narrators.genderOf("en-us-x-tpf-local"))
+        assertEquals(Gender.Male, Narrators.genderOf("en-us-x-iom-network"))
+        assertEquals(Gender.Female, Narrators.genderOf("en-US-SMTf00"))
+        assertEquals(Gender.Male, Narrators.genderOf("en-GB-SMTm01"))
+        assertEquals(Gender.Female, Narrators.genderOf("en-gb#female_2-local"))
+        assertEquals(Gender.Male, Narrators.genderOf("en-gb#male_1-local"))
+        assertEquals(null, Narrators.genderOf("en-in-x-zzz-local"))
     }
 
     @Test
-    fun longSentencesBreakAfterCommasIntoFullPieces() {
-        val sentence = "When the carriage at last came round the bend in the road, " +
-            "the whole household, servants and all, had gathered on the steps to watch it arrive, " +
-            "though nobody had said they would."
-        val pieces = clauses(sentence)
-        assertTrue(pieces.size > 1)
-        assertTrue(pieces.dropLast(1).all { it.length >= 50 })
-        assertEquals(sentence.replace(" ", ""), pieces.joinToString("").replace(" ", ""))
+    fun leighaAndAlexAreTheBestOfflineVoicesForTheBook() {
+        val voices = listOf(
+            voice("en-us-x-sfg-local"), voice("en-us-x-tpf-local"), voice("en-us-x-tpf-network", quality = 4, network = true),
+            voice("en-us-x-iol-local"), voice("en-us-x-iom-local"), voice("en-gb-x-rjs-local"), voice("fr-fr-x-frb-local"),
+        )
+        val picked = Narrators.pick(voices, "en")
+        assertEquals("en-us-x-tpf-local", picked[Narrator.Leigha]?.name)
+        assertEquals("en-us-x-iom-local", picked[Narrator.Alex]?.name)
+        // A British book gets British voices where there are some.
+        assertEquals("en-gb-x-rjs-local", Narrators.pick(voices, "en-GB")[Narrator.Alex]?.name)
     }
 
     @Test
-    fun silenceAroundSpeechIsTrimmedToWhatIsKept() {
-        val rate = 1000
-        val samples = FloatArray(500) + FloatArray(100) { 0.5f } + FloatArray(400)
-        val trimmed = trimSilence(samples, rate, lead = 0.02, tail = 0.1)
-        assertEquals(20 + 100 + 100, trimmed.size)
+    fun voicesThatCantBeToldApartStillGiveTwoNarrators() {
+        val picked = Narrators.pick(listOf(voice("hi-in-x-hia-local"), voice("hi-in-x-hie-local")), "hi")
+        assertEquals(2, picked.size)
+        assertTrue(picked[Narrator.Leigha] != picked[Narrator.Alex])
+        assertTrue(Narrators.pick(listOf(voice("hi-in-x-hia-local")), "ja").isEmpty())
     }
 
     @Test

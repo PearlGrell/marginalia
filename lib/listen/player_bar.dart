@@ -133,7 +133,7 @@ class _PlayerBarState extends ConsumerState<PlayerBar> {
                         const SizedBox(width: 4),
                         Flexible(
                           child: Text(
-                            state.voice?.name ?? 'Voice',
+                            state.voice ?? 'Voice',
                             style: small,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -188,7 +188,7 @@ class _PlayerBarState extends ConsumerState<PlayerBar> {
                       separatorBuilder: (_, _) => const SizedBox(width: Space.sm),
                       itemBuilder: (context, i) {
                         final v = voices[i];
-                        final selected = v.voice.speaker == state.voice?.speaker;
+                        final selected = v.name == state.voice;
                         return chip(
                           on: selected,
                           onTap: () async {
@@ -196,7 +196,7 @@ class _PlayerBarState extends ConsumerState<PlayerBar> {
                             if (mounted) setState(() => _choosingVoice = false);
                           },
                           child: Text(
-                            '${v.voice.name}${v.voice.featured ? ' ★' : ''}',
+                            v.name,
                             style: small.copyWith(fontWeight: selected ? FontWeight.w600 : null),
                           ),
                         );

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'kokoro.dart';
 import '../storage/local_store.dart';
 
 enum SleepTimer {
@@ -27,22 +26,15 @@ enum SleepTimer {
   };
 }
 
-/// A Kokoro voice offered for the open book.
+/// Who reads: Leigha or Alex, the phone's most natural female and male voices for the book
+/// (see `Narrators.kt`).
 class Voice {
-  const Voice({required this.id, required this.kokoroName, required this.language, this.selected = false});
+  const Voice({required this.id, required this.name, this.selected = false});
 
-  /// The speaker number.
+  /// "leigha" or "alex".
   final String id;
-
-  /// Kokoro's name for it ("am_liam").
-  final String kokoroName;
-  final String language;
+  final String name;
   final bool selected;
-
-  KokoroVoice get voice => KokoroVoice(int.tryParse(id) ?? 0, kokoroName);
-
-  /// "Liam · American male".
-  String get name => '${voice.name} · ${voice.accent} ${voice.gender}';
 }
 
 class ListenState {
@@ -57,8 +49,8 @@ class ListenState {
     this.following = true,
   });
 
-  /// The voice reading.
-  final KokoroVoice? voice;
+  /// Who is reading: "Leigha" or "Alex".
+  final String? voice;
 
   /// A book is being read aloud (playing or paused).
   final bool active;
@@ -82,7 +74,7 @@ class ListenState {
     SleepTimer? sleep,
     DateTime? sleepEndsAt,
     bool clearSleepEnd = false,
-    KokoroVoice? voice,
+    String? voice,
     bool? following,
   }) => ListenState(
     following: following ?? this.following,
@@ -96,12 +88,14 @@ class ListenState {
   );
 }
 
-/// Reads the open book aloud with Kokoro's voices (see `ListenChannel.kt`). The reader
+/// Reads the open book aloud with the phone's own voices, as Leigha or Alex (see
+/// `ListenChannel.kt`). The reader
 /// follows along: it marks the sentence and turns pages, so the reading position is the
 /// listening position.
 class ListenController extends Notifier<ListenState> {
   static const _channel = MethodChannel('marginalia/listen');
   static const _speedKey = 'listen.speed';
+  static const _narratorKey = 'listen.narrator';
   static const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
   Timer? _sleepTimer;
@@ -139,31 +133,24 @@ class ListenController extends Notifier<ListenState> {
 
   bool get isActive => state.active;
 
-  /// Returned by [start] when the voices still have to be downloaded.
-  static const needsVoices = 'needs-voices';
-
-  /// Starts reading [publicationId] aloud from [locatorJson] (the page on screen), with the
-  /// Kokoro voice chosen for the book's [language]. Returns an error message, [needsVoices],
-  /// or null once it's reading.
+  /// Starts reading [publicationId] aloud from [locatorJson] (the page on screen), in the
+  /// book's [language], with the narrator last chosen. Returns an error message, or null once
+  /// it's reading.
   Future<String?> start(String publicationId, String? locatorJson, {String? language}) async {
-    if (!ref.read(kokoroProvider).installed) return needsVoices;
-    if (!KokoroVoice.speaks(language)) {
-      return "There are no voices for this book's language yet. They speak English, Spanish, "
-          'French, Hindi, Italian, Japanese, Portuguese and Chinese.';
-    }
     try {
-      final voice = ref.read(listenVoicesProvider).kokoroFor(language);
+      final narrator = ref.read(localStoreProvider).readJson(_narratorKey) as String? ?? 'leigha';
       await _channel.invokeMethod('start', {
         'publicationId': publicationId,
         'locator': locatorJson,
         'speed': state.speed,
         'language': language,
-        'speaker': voice.speaker,
+        'narrator': narrator,
       });
-      state = state.copyWith(active: true, playing: true, voice: voice);
+      final voices = await this.voices();
+      final reading = voices.where((v) => v.selected).firstOrNull;
+      state = state.copyWith(active: true, playing: true, voice: reading?.name);
       return null;
     } on PlatformException catch (e) {
-      if (e.code == 'not_installed') return needsVoices;
       return e.message ?? "This book can't be read aloud.";
     }
   }
@@ -187,21 +174,15 @@ class ListenController extends Notifier<ListenState> {
   Future<List<Voice>> voices() async {
     final list = await _channel.invokeListMethod<Map<Object?, Object?>>('voices') ?? const [];
     return [
-      for (final v in list)
-        Voice(
-          id: v['id']! as String,
-          kokoroName: v['name']! as String,
-          language: v['language']! as String,
-          selected: v['selected'] == true,
-        ),
+      for (final v in list) Voice(id: v['id']! as String, name: v['name']! as String, selected: v['selected'] == true),
     ];
   }
 
-  /// Changes the voice, and remembers it for books in its language.
+  /// Changes who reads, and remembers it for next time.
   Future<void> setVoice(Voice voice) async {
     await _channel.invokeMethod('setVoice', {'id': voice.id});
-    await ref.read(listenVoicesProvider).setKokoro(voice.voice);
-    state = state.copyWith(voice: voice.voice);
+    await ref.read(localStoreProvider).writeJson(_narratorKey, voice.id);
+    state = state.copyWith(voice: voice.name);
   }
 
   /// Reads on from [locatorJson] (a line tapped in the page), and follows it again.

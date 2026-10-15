@@ -9,6 +9,8 @@
         android:label="Marginalia"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Gemma on the GPU (MediaPipe), where the phone has it. -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

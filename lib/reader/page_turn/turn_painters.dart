@@ -15,7 +15,8 @@ enum TurnStyle {
   final String label;
 }
 
-/// Where the curl is for a given turn progress. See `shaders/page_curl.frag`.
+/// Where the fold is for a given turn progress, and how soft its shading is. See
+/// `shaders/page_curl.frag`.
 class CurlGeometry {
   const CurlGeometry({required this.axisPoint, required this.axisDir, required this.radius});
 
@@ -38,20 +39,20 @@ class CurlGeometry {
     final distance = delta.distance;
     if (distance < 0.5) return null;
 
-    final dir = delta / distance;
-    final radius = math.min(maxRadius, distance / math.pi);
-    final axisOffset = (distance - math.pi * radius) / 2;
+    // The page folds flat along the line halfway between the corner and where it's held.
+    // The fold's shading softens as the page lifts higher.
     return CurlGeometry(
-      axisPoint: finger + dir * axisOffset,
-      axisDir: dir,
-      radius: radius,
+      axisPoint: (corner + finger) / 2,
+      axisDir: delta / distance,
+      radius: math.min(maxRadius, distance * 0.2),
     );
   }
 
-  static double maxRadiusFor(double width) => (width * 0.09).clamp(18.0, 60.0);
+  static double maxRadiusFor(double width) => (width * 0.08).clamp(16.0, 48.0);
 
-  /// How far the lifted corner moves from flat (progress 0) to fully turned (progress 1).
-  static double travelFor(double width) => 2 * width + math.pi * maxRadiusFor(width);
+  /// How far the lifted corner moves from flat (progress 0) to fully turned (progress 1):
+  /// far enough that the fold, and its shadow, end up past the left edge.
+  static double travelFor(double width) => 2 * width + 3 * maxRadiusFor(width);
 
   final Offset axisPoint;
   final Offset axisDir;

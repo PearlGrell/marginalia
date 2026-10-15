@@ -1,17 +1,17 @@
-import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../companion/companion_sheet.dart' show confirmGemmaDownload;
+import '../companion/gemma.dart';
 import '../dictionary/dictionary_pack.dart';
 import '../dictionary/foreign_dictionary.dart';
 import '../theme/tokens.dart';
 import '../translate/translate_sheet.dart' show pickTranslateLanguage;
 import '../translate/translation.dart';
-import '../listen/kokoro.dart';
 
 /// Everything the app downloads for offline use: the dictionary, translation languages and
-/// reading voices. This is the one place to add or remove them.
+/// the reading companion's model. This is the one place to add or remove them.
 class DownloadsScreen extends StatelessWidget {
   const DownloadsScreen({super.key});
 
@@ -32,8 +32,8 @@ class DownloadsScreen extends StatelessWidget {
           _TranslationSection(),
           SizedBox(height: Space.xl),
           Divider(),
-          _Section('Voices for Listen'),
-          _VoicesSection(),
+          _Section('Reading companion'),
+          _GemmaSection(),
         ],
       ),
     );
@@ -270,183 +270,69 @@ class _TranslationSection extends ConsumerWidget {
   }
 }
 
-// ---- Voices ----
+// ---- Reading companion ----
 
-final _voiceLanguageProvider = NotifierProvider<_VoiceLanguage, String>(_VoiceLanguage.new);
-
-/// Which language's voices are listed: the phone's, if Kokoro speaks it.
-class _VoiceLanguage extends Notifier<String> {
-  @override
-  String build() {
-    final locale = PlatformDispatcher.instance.locale;
-    if (locale.languageCode == 'en') return locale.countryCode == 'GB' ? 'en-GB' : 'en-US';
-    return kokoroLanguages.map((l) => l.$1).firstWhere(
-      (code) => code.split('-').first == locale.languageCode,
-      orElse: () => 'en-US',
-    );
-  }
-
-  void set(String language) => state = language;
-}
-
-class _VoicesSection extends ConsumerStatefulWidget {
-  const _VoicesSection();
+/// Gemma, for "Ask about the book" on phones without Gemini Nano.
+class _GemmaSection extends ConsumerWidget {
+  const _GemmaSection();
 
   @override
-  ConsumerState<_VoicesSection> createState() => _VoicesSectionState();
-}
-
-class _VoicesSectionState extends ConsumerState<_VoicesSection> {
-  /// The voice whose sample is playing or being made.
-  int? _playing;
-  late final KokoroPack _kokoro = ref.read(kokoroProvider.notifier);
-
-  @override
-  void dispose() {
-    if (_playing != null) _kokoro.stop();
-    super.dispose();
-  }
-
-  Future<void> _sample(KokoroVoice voice) async {
-    if (_playing == voice.speaker) {
-      setState(() => _playing = null);
-      await _kokoro.stop();
-      return;
-    }
-    setState(() => _playing = voice.speaker);
-    try {
-      await _kokoro.sample(voice, sampleLines[voice.baseLanguage] ?? sampleLines['en']!);
-    } catch (e) {
-      if (mounted && _playing == voice.speaker) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Couldn't play ${voice.name}: $e")));
-      }
-    }
-    if (mounted && _playing == voice.speaker) setState(() => _playing = null);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final language = ref.watch(_voiceLanguageProvider);
-    final kokoro = ref.watch(kokoroProvider);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final gemma = ref.watch(gemmaProvider);
+    final pack = ref.read(gemmaProvider.notifier);
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
-    final listen = ref.read(listenVoicesProvider);
-    final languageName = kokoroLanguages.firstWhere((l) => l.$1 == language, orElse: () => kokoroLanguages.first).$2;
 
-    final Widget body = switch (kokoro.status) {
-      KokoroStatus.installed => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Language'),
-            trailing: Text(languageName, style: text.titleSmall),
-            onTap: () async {
-              final picked = await showModalBottomSheet<String>(
-                context: context,
-                builder: (context) => SafeArea(
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: [
-                      for (final (code, name) in kokoroLanguages)
-                        ListTile(
-                          title: Text(name),
-                          trailing: code == language ? const Icon(Icons.check) : null,
-                          onTap: () => Navigator.pop(context, code),
-                        ),
-                    ],
-                  ),
+    final Widget body = switch (gemma.status) {
+      GemmaStatus.installed => ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.check_circle_outline, size: 20),
+        title: const Text('Gemma 3 (1B)'),
+        subtitle: const Text('${GemmaPack.sizeLabel} on this phone'),
+        trailing: TextButton(
+          onPressed: () async {
+            final ok = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Remove Gemma?'),
+                content: const Text(
+                  'This frees ${GemmaPack.sizeLabel}. Ask about the book will show passages only until '
+                  'you download it again.',
                 ),
-              );
-              if (picked != null) ref.read(_voiceLanguageProvider.notifier).set(picked);
-            },
-          ),
-          for (final voice in KokoroVoice.forLanguage(language))
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: IconButton(
-                tooltip: _playing == voice.speaker ? 'Stop' : 'Play a sample',
-                icon: Icon(_playing == voice.speaker ? Icons.stop_circle_outlined : Icons.play_circle_outline),
-                onPressed: () => _sample(voice),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep')),
+                  FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
+                ],
               ),
-              title: Text(voice.name),
-              subtitle: Text('${voice.accent} ${voice.gender}${voice.featured ? ' · one of the best' : ''}'),
-              trailing: listen.kokoroFor(voice.language).speaker == voice.speaker
-                  ? Icon(Icons.check, color: scheme.primary)
-                  : TextButton(
-                      onPressed: () async {
-                        await listen.setKokoro(voice);
-                        setState(() {});
-                      },
-                      child: const Text('Use'),
-                    ),
-            ),
-          const SizedBox(height: Space.xs),
-          Text(
-            'The first sample in a language takes a few seconds while the voices load.',
-            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton(
-              onPressed: () async {
-                final ok = await showDialog<bool>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Remove the voices?'),
-                    content: const Text(
-                      'This frees ${KokoroPack.installedSizeLabel}. Listen won’t work until you download them again.',
-                    ),
-                    actions: [
-                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-                      TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
-                    ],
-                  ),
-                );
-                if (ok == true) await _kokoro.remove();
-              },
-              child: const Text('Remove voices'),
-            ),
-          ),
-        ],
+            );
+            if (ok == true) await pack.remove();
+          },
+          child: const Text('Remove'),
+        ),
       ),
-      KokoroStatus.downloading || KokoroStatus.unpacking => Column(
+      GemmaStatus.downloading => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          LinearProgressIndicator(value: kokoro.progress, minHeight: 3),
-          const SizedBox(height: Space.xs),
+          LinearProgressIndicator(value: gemma.progress, minHeight: 3),
           Row(
             children: [
-              Expanded(
-                child: Text(
-                  kokoro.status == KokoroStatus.downloading
-                      ? 'Downloading… ${((kokoro.progress ?? 0) * 100).round()}%'
-                      : 'Unpacking on your phone… ${((kokoro.progress ?? 0) * 100).round()}%',
-                  style: text.bodySmall,
-                ),
-              ),
-              if (kokoro.status == KokoroStatus.downloading)
-                TextButton(onPressed: _kokoro.cancel, child: const Text('Cancel')),
+              Expanded(child: Text('Downloading… ${((gemma.progress ?? 0) * 100).round()}%', style: text.bodySmall)),
+              TextButton(onPressed: pack.cancel, child: const Text('Cancel')),
             ],
           ),
         ],
       ),
-      KokoroStatus.notInstalled || KokoroStatus.failed => Column(
+      GemmaStatus.notInstalled || GemmaStatus.failed => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          FilledButton.icon(
+          OutlinedButton.icon(
             icon: const Icon(Icons.download_outlined),
-            label: const Text('Download voices (${KokoroPack.downloadSizeLabel})'),
-            onPressed: _kokoro.install,
+            label: const Text('Download Gemma (${GemmaPack.sizeLabel})'),
+            onPressed: () async {
+              if (await confirmGemmaDownload(context)) await pack.install();
+            },
           ),
-          const SizedBox(height: Space.xs),
-          Text(
-            '54 natural voices for English (American and British), Spanish, French, Hindi, Italian, '
-            'Japanese, Brazilian Portuguese and Chinese. They run on your phone, with no '
-            'connection. Takes ${KokoroPack.installedSizeLabel} once unpacked; Wi-Fi recommended.',
-            style: text.bodySmall,
-          ),
-          if (kokoro.error case final error?)
+          if (gemma.error case final error?)
             Padding(
               padding: const EdgeInsets.only(top: Space.sm),
               child: Text(error, style: text.bodySmall?.copyWith(color: scheme.error)),
@@ -459,7 +345,8 @@ class _VoicesSectionState extends ConsumerState<_VoicesSection> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'Listen reads with Kokoro, natural-sounding voices that run on your phone.',
+          'Ask about the book answers in plain words with Gemini Nano on phones that have it. On '
+          'other phones it can use Gemma, a small model that runs on your phone.',
           style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: Space.sm),

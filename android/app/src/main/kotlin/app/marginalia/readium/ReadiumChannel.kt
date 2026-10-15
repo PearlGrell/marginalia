@@ -45,16 +45,18 @@ class ReadiumChannel(
                     }
                 }
             }
-            "textUpTo" -> {
-                // The book's text from the start to a place (never past it: no spoilers),
-                // keeping the last maxChars of it: [{chapter, text}] by paragraph.
+            "textRange" -> {
+                // Part of the book's text, as it's read (the app keeps it, a page at a time):
+                // after a place in one chapter, up to a place in another (reading-order
+                // indexes and progressions), as [{chapter, progression, text}] by paragraph.
                 val publication = call.argument<String>("id")?.let(repository::get)
                     ?: return result.error("bad_args", "The book is not open", null)
-                val until = call.argument<String>("locator")?.let { Locator.fromJSON(JSONObject(it)) }
-                    ?: return result.error("bad_args", "locator is invalid", null)
-                val maxChars = call.argument<Int>("maxChars") ?: 400_000
+                val fromChapter = call.argument<Int>("fromChapter") ?: return result.error("bad_args", "fromChapter", null)
+                val after = call.argument<Double>("afterProgression") ?: -1.0
+                val toChapter = call.argument<Int>("toChapter") ?: fromChapter
+                val upTo = call.argument<Double>("toProgression") ?: 1.0
                 scope.launch {
-                    result.success(withContext(Dispatchers.Default) { publication.textUpTo(until, maxChars) })
+                    result.success(withContext(Dispatchers.Default) { publication.textRange(fromChapter, after, toChapter, upTo) })
                 }
             }
             "close" -> {
@@ -76,27 +78,31 @@ class ReadiumChannel(
 }
 
 /**
- * The book's paragraphs from its start up to [until] (not past it), as `{chapter, text}` with
- * the chapter's reading-order index; only the last [maxChars] of text are kept.
+ * The book's paragraphs after [afterProgression] in chapter [fromChapter], up to and including
+ * [toProgression] in chapter [toChapter] (reading-order indexes), as `{chapter, progression, text}`.
  */
-private suspend fun Publication.textUpTo(until: Locator, maxChars: Int): List<Map<String, Any?>> {
+private suspend fun Publication.textRange(
+    fromChapter: Int,
+    afterProgression: Double,
+    toChapter: Int,
+    toProgression: Double,
+): List<Map<String, Any?>> {
+    if (fromChapter !in readingOrder.indices || toChapter < fromChapter) return emptyList()
     val order = readingOrder.map { it.url().removeFragment().toString() }
-    val lastChapter = order.indexOf(until.href.removeFragment().toString())
-    if (lastChapter < 0) return emptyList()
-    val lastProgression = until.locations.progression ?: 0.0
-    val iterator = content()?.iterator() ?: return emptyList()
-    val kept = ArrayDeque<Pair<Int, String>>()
-    var total = 0
+    val start = locatorFromLink(readingOrder[fromChapter]) ?: return emptyList()
+    val iterator = content(start)?.iterator() ?: return emptyList()
+    val kept = mutableListOf<Map<String, Any?>>()
     while (true) {
         val element = iterator.nextOrNull() ?: break
         val chapter = order.indexOf(element.locator.href.removeFragment().toString())
-        if (chapter > lastChapter) break
-        if (chapter == lastChapter && (element.locator.locations.progression ?: 0.0) > lastProgression) break
+        if (chapter < fromChapter) continue
+        if (chapter > toChapter) break
+        val progression = element.locator.locations.progression ?: 0.0
+        if (chapter == fromChapter && progression <= afterProgression) continue
+        if (chapter == toChapter && progression > toProgression) break
         val text = (element as? Content.TextualElement)?.text?.trim()
         if (text.isNullOrEmpty()) continue
-        kept.addLast(chapter to text)
-        total += text.length
-        while (total > maxChars && kept.size > 1) total -= kept.removeFirst().second.length
+        kept += mapOf("chapter" to chapter, "progression" to progression, "text" to text)
     }
-    return kept.map { (chapter, text) -> mapOf("chapter" to chapter, "text" to text) }
+    return kept
 }

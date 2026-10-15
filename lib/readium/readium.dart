@@ -19,21 +19,30 @@ class Readium {
   Future<void> close(String publicationId) =>
       _channel.invokeMethod('close', {'id': publicationId});
 
-  /// The book's paragraphs from its start up to [locatorJson] (never past it), keeping the
-  /// last [maxChars] of text, with each one's chapter (reading-order index).
-  Future<List<({int chapter, String text})>> textUpTo(
-    String publicationId,
-    String locatorJson, {
-    int maxChars = 400000,
+  /// The book's paragraphs after [afterProgression] in chapter [fromChapter] (reading-order
+  /// indexes), up to and including [toProgression] in [toChapter]: a page as it's read, or a
+  /// whole chapter (the defaults).
+  Future<List<({int chapter, double progression, String text})>> textRange(
+    String publicationId, {
+    required int fromChapter,
+    double afterProgression = -1,
+    int? toChapter,
+    double toProgression = 1,
   }) async {
-    final list = await _channel.invokeListMethod<Map<Object?, Object?>>('textUpTo', {
+    final list = await _channel.invokeListMethod<Map<Object?, Object?>>('textRange', {
       'id': publicationId,
-      'locator': locatorJson,
-      'maxChars': maxChars,
+      'fromChapter': fromChapter,
+      'afterProgression': afterProgression,
+      'toChapter': toChapter ?? fromChapter,
+      'toProgression': toProgression,
     });
     return [
       for (final m in list ?? const <Map<Object?, Object?>>[])
-        (chapter: (m['chapter']! as num).toInt(), text: m['text']! as String),
+        (
+          chapter: (m['chapter']! as num).toInt(),
+          progression: (m['progression'] as num?)?.toDouble() ?? 0,
+          text: m['text']! as String,
+        ),
     ];
   }
 }
