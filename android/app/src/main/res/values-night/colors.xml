@@ -4,8 +4,7 @@
     <color name="widget_background">#201D1A</color>
     <color name="widget_ink">#E8E1D5</color>
     <color name="widget_muted">#9A9186</color>
-    <color name="widget_accent">#C9776B</color>
-    <color name="widget_on_accent">#2A0F0C</color>
-    <color name="widget_accent_container">#4A2622</color>
-    <color name="widget_track">#2E2A26</color>
+    <color name="widget_accent">#E3A6AE</color>
+    <color name="widget_track">#3A3530</color>
+    <color name="widget_cover_placeholder">#2E2A26</color>
 </resources>

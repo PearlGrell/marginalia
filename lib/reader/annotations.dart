@@ -24,6 +24,7 @@ class ReaderSelection {
     this.progression,
     this.paragraphId,
     this.paragraphText,
+    this.pageContext,
   });
 
   factory ReaderSelection.fromMap(Map<Object?, Object?> map) => ReaderSelection(
@@ -36,6 +37,7 @@ class ReaderSelection {
     progression: (map['progression'] as num?)?.toDouble(),
     paragraphId: map['paragraphId'] as String?,
     paragraphText: map['paragraphText'] as String?,
+    pageContext: map['pageContext'] as String?,
   );
 
   /// highlight, note, define, translate or copy.
@@ -51,6 +53,9 @@ class ReaderSelection {
   /// under it.
   final String? paragraphId;
   final String? paragraphText;
+
+  /// For share: the paragraphs around the selection, as JSON (see [PageExcerpt.fromJson]).
+  final String? pageContext;
 }
 
 extension AnnotationLook on Annotation {

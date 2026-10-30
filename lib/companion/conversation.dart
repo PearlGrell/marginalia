@@ -123,10 +123,7 @@ class BookSoFar {
   int get chapter => chapterNow ?? (_paragraphs.isEmpty ? 0 : _paragraphs.last.chapter + 1);
 
   /// "chapter 3, "A Caucus-Race and a Long Tale"", for prompts.
-  String chapterName(int number) {
-    final title = titleOf(number);
-    return title == null ? 'chapter $number' : 'chapter $number, "$title"';
-  }
+  String chapterName(int number) => chapterLabel(number, titleOf(number));
 
   /// What the model is told before a conversation about this book.
   String get instructions =>
@@ -179,6 +176,16 @@ class BookSoFar {
   /// A few of chapter [number]'s own sentences, when it has no summary.
   List<String> keySentences(int number, {int count = 3}) =>
       recapSentences(_byChapter[number] ?? const [], chapters: 1, count: count);
+}
+
+/// Chapter [number] for a prompt: 'chapter 3, "A Caucus-Race and a Long Tale"', or its title
+/// alone when that already names it ('"CHAPTER 1. Loomings."': the book's own numbering, which
+/// front matter and parts can make differ from ours).
+String chapterLabel(int number, String? title) {
+  if (title == null || title.trim().isEmpty) return 'chapter $number';
+  final t = title.trim();
+  if (RegExp(r'^(chapter|letter|book|part|stave|canto|section)\b', caseSensitive: false).hasMatch(t)) return '"$t"';
+  return 'chapter $number, "$t"';
 }
 
 /// A chapter's title: its first line, when that reads like one ("CHAPTER III. A Caucus-Race").

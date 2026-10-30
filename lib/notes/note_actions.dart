@@ -7,12 +7,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../cloud/account.dart';
 import '../data/database.dart';
 import '../data/library.dart';
-import '../reader/annotations.dart';
+import '../reader/reader_preferences.dart';
 import '../share/file_export.dart';
+import '../share/page_card.dart';
 import '../share/quote_service.dart';
 import '../share/share_service.dart';
 import '../share/share_sheet.dart' show shareText;
-import '../share/story_card.dart';
 import '../theme/tokens.dart';
 import 'notes_export.dart';
 
@@ -100,19 +100,21 @@ Future<void> shareNoteLink(BuildContext context, WidgetRef ref, Annotation annot
   }
 }
 
-/// The passage as a story card.
-Future<void> shareNoteImage(BuildContext context, Annotation annotation, Book? book) {
-  return showStorySheet(
+/// The passage as an image of its page, in the colors the book is read in.
+Future<void> shareNoteImage(BuildContext context, WidgetRef ref, Annotation annotation, Book? book) {
+  final coverColor = book?.coverColor == null ? null : Color(book!.coverColor!);
+  return showPageShareSheet(
     context,
-    StoryContent(
-      quote: annotation.selectedText ?? '',
-      note: annotation.note,
+    PageCardContent(
+      excerpt: PageExcerpt.around(annotation.textBefore, annotation.selectedText ?? '', annotation.textAfter),
       title: book?.title ?? '',
       author: book?.authors.join(', '),
-      accent: annotation.highlightColor.onLight,
-      coverColor: book?.coverColor == null ? null : Color(book!.coverColor!),
+      coverColor: coverColor,
       coverPath: book?.coverPath,
     ),
+    reading: ref
+        .read(readerPreferencesProvider)
+        .resolvePage(MediaQuery.platformBrightnessOf(context), coverColor: coverColor),
   );
 }
 

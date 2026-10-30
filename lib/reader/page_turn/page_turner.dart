@@ -142,6 +142,14 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
   /// A tap that came in during a turn; it runs when the turn ends.
   _Direction? _queuedTap;
 
+  /// Which turn this is: one given up on (see [_unstick]) doesn't carry on when its view
+  /// answers late.
+  var _turn = 0;
+
+  /// Gives up on a turn whose view never answered, so its pictures don't stay on the page.
+  Timer? _stuck;
+  static const _stuckAfter = Duration(seconds: 5);
+
   @override
   void initState() {
     super.initState();
@@ -171,11 +179,22 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
     } else if (oldWidget.source != widget.source) {
       _scheduleCapture();
     }
+    if (oldWidget.enabled != widget.enabled) {
+      if (widget.enabled) {
+        // A selection ended: the page may have a new highlight on it.
+        _dropCache();
+        _scheduleCapture();
+      } else {
+        // No pictures while text is selected: drawing the page into one can blank its text.
+        _captureTimer?.cancel();
+      }
+    }
   }
 
   @override
   void dispose() {
     _captureTimer?.cancel();
+    _stuck?.cancel();
     _progress.dispose();
     _tilt.dispose();
     _shader?.dispose();
@@ -208,7 +227,7 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
   Future<void> _capture() async {
     final source = widget.source;
     if (!mounted || source == null || _current != null || _capturing != null) return;
-    if (_style == TurnStyle.none) return;
+    if (_style == TurnStyle.none || !widget.enabled) return;
     if (_phase != _Phase.idle) return _scheduleCapture();
 
     final key = widget.pageKey;
@@ -389,6 +408,9 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
     if (source == null) return false;
     _direction = direction;
     _captureTimer?.cancel();
+    final turn = ++_turn;
+    _stuck?.cancel();
+    _stuck = Timer(_stuckAfter, _unstick);
 
     if (_style == TurnStyle.none) {
       // No animation: track the drag without drawing anything, move once it's released.
@@ -400,9 +422,11 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
 
     setState(() => _phase = _Phase.preparing);
     if (_capturing != null) await _capturing;
+    if (turn != _turn) return false;
 
     if (direction == _Direction.forward) {
       final current = _current ?? await source.snapshot();
+      if (turn != _turn) return false;
       _current = null;
       if (!mounted || current == null) {
         _reset();
@@ -437,6 +461,7 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
       _moved = source.goBackward();
     } else {
       final current = _current ?? await source.snapshot();
+      if (turn != _turn) return false;
       _current = null;
       if (!mounted || current == null) {
         _reset();
@@ -444,8 +469,10 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
       }
       setState(() => _under = current); // Cover the view while it moves back.
       final moved = await source.goBackward();
+      if (turn != _turn) return false;
       _moved = Future.value(moved);
       final previous = moved ? await source.snapshot() : null;
+      if (turn != _turn) return false;
       if (!mounted || previous == null) {
         _reset();
         return false;
@@ -468,10 +495,13 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
     if (_phase == _Phase.settling) return;
     final forward = _direction == _Direction.forward;
     final source = widget.source!;
+    final turn = _turn;
 
     if (_style == TurnStyle.none) {
       _phase = _Phase.settling;
-      if (complete && await (forward ? source.goForward() : source.goBackward())) {
+      final moved = complete && await (forward ? source.goForward() : source.goBackward());
+      if (turn != _turn) return;
+      if (moved) {
         if (widget.haptics) HapticFeedback.selectionClick();
         widget.onTurned?.call();
       }
@@ -494,12 +524,14 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
       await _progress.animateWith(simulation);
       _progress.value = target;
     }
-    if (!mounted) return;
+    if (!mounted || turn != _turn) return;
 
     final moved = await (_moved ?? Future.value(false));
+    if (turn != _turn) return;
     if (!complete && moved) {
       // Put the view back where it was, still hidden under the picture.
       await (forward ? source.goBackward() : source.goForward());
+      if (turn != _turn) return;
     }
     if (complete && moved) {
       if (widget.haptics) HapticFeedback.selectionClick();
@@ -509,7 +541,7 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
       await _underReady;
       await Future<void>.delayed(_revealDelay);
     }
-    if (mounted) _finish(complete: complete && moved);
+    if (mounted && turn == _turn) _finish(complete: complete && moved);
   }
 
   /// Ends a turn, keeping the pictures that still show a known page.
@@ -549,7 +581,25 @@ class PageTurnerState extends State<PageTurner> with SingleTickerProviderStateMi
     }
   }
 
+  /// A turn whose view never answered: its pictures come off the page, and the view is
+  /// shown as it is.
+  void _unstick() {
+    if (!mounted || _phase == _Phase.idle) return;
+    debugPrint('Page turn gave up: the page never answered');
+    _turn++;
+    _progress.stop();
+    final front = _front;
+    final under = _under;
+    _front = null;
+    _under = null;
+    _dropCache();
+    _reset();
+    _disposeUnlessHeld(front);
+    _disposeUnlessHeld(under);
+  }
+
   void _reset() {
+    _stuck?.cancel();
     setState(() {
       _phase = _Phase.idle;
       _front = null;

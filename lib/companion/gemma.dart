@@ -124,6 +124,24 @@ class GemmaPack extends Notifier<GemmaState> {
     _client = null;
   }
 
+  /// Answers being written in the companion, and who's waiting for there to be none.
+  var _answering = 0;
+  Completer<void>? _idle;
+
+  /// Once no answer is being written in the companion (at once, if none is): what's done in
+  /// the background waits for this, so a question doesn't queue behind it.
+  Future<void> idle() async {
+    while (_answering > 0) {
+      await (_idle ??= Completer<void>()).future;
+    }
+  }
+
+  void _answered() {
+    if (--_answering > 0) return;
+    _idle?.complete();
+    _idle = null;
+  }
+
   /// Gemma's answer to [prompt] on its own, outside the conversation; null if it couldn't.
   Future<String?> once(String prompt, {int maxTokens = 200}) async {
     if (!state.installed) return null;
@@ -190,6 +208,7 @@ class GemmaPack extends Notifier<GemmaState> {
     final id = _nextId++;
     final out = StreamController<String>();
     _writing[id] = out.add;
+    _answering++;
     final frames = _watchFrames();
     () async {
       try {
@@ -211,6 +230,7 @@ class GemmaPack extends Notifier<GemmaState> {
         out.addError(e);
       } finally {
         _writing.remove(id);
+        _answered();
         frames();
         await out.close();
       }

@@ -11,7 +11,7 @@ class WidgetTest {
     @Test
     fun todaysReadingShowsTheStreakAndMinutes() {
         assertEquals(
-            "\uD83D\uDD25 5 \u00b7 12 of 30 min today",
+            ContinueReadingWidget.Status("5-day streak · 12/30 min today", streak = true),
             ContinueReadingWidget.statusLine(today, today, todaySeconds = 720, streak = 5, goalMinutes = 30),
         )
     }
@@ -19,8 +19,16 @@ class WidgetTest {
     @Test
     fun afterMidnightTheStreakAsksForToday() {
         assertEquals(
-            "\uD83D\uDD25 5 \u00b7 read today to keep it \u00b7 0 of 30 min today",
+            ContinueReadingWidget.Status("5-day streak · read today", streak = true),
             ContinueReadingWidget.statusLine(today, today.minusDays(1), todaySeconds = 900, streak = 5, goalMinutes = 30),
+        )
+    }
+
+    @Test
+    fun withoutAStreakItsJustTodaysMinutes() {
+        assertEquals(
+            ContinueReadingWidget.Status("12/30 min today", streak = false),
+            ContinueReadingWidget.statusLine(today, today, todaySeconds = 720, streak = 0, goalMinutes = 30),
         )
     }
 

@@ -198,6 +198,17 @@ class ReadiumViewController {
     }
   }
 
+  /// Ends the selection on the page (a tap somewhere else, without picking from its menu).
+  Future<void> clearSelection() async {
+    try {
+      await _channel.invokeMethod('clearSelection');
+    } on PlatformException {
+      // Nothing selected, or the page is gone.
+    } on MissingPluginException {
+      // The page is gone.
+    }
+  }
+
   /// Shows [text] under the paragraph marked [id] when it was selected for translating.
   Future<bool> insertTranslation(String id, String text) async =>
       await _channel.invokeMethod<bool>('insertTranslation', {'id': id, 'text': text}) ?? false;

@@ -72,6 +72,7 @@ import org.readium.r2.shared.util.AbsoluteUrl
  * - `search {query}` → `[{locator, title, before, match, after, progression}]`;
  *   `markSearchResult {locator?, color}` underlines the one being looked at
  * - `insertTranslation {id, text}` puts a translation after a marked paragraph
+ * - `clearSelection` ends the selection (a tap elsewhere, without using its menu)
  * - `locatorAt {x, y}` → the locator of the sentence at a tap (its paragraph, with the
  *   sentence as the text), or null; `firstVisibleSentence` → the same for the first sentence
  *   that starts on the page
@@ -80,7 +81,7 @@ import org.readium.r2.shared.util.AbsoluteUrl
  *
  * It calls `onLocatorChanged` on Dart whenever the reading position changes, `onTap {x, y}`
  * (fractions of the view) for taps that didn't follow a link, `onSelection {action, locator,
- * text, before, after, paragraphId?, paragraphText?}` for the selection menu,
+ * text, before, after, paragraphId?, paragraphText?, pageContext?}` for the selection menu,
  * `onHighlightTapped {id}`, and `onFootnote {html, href}` instead of jumping to a footnote.
  */
 @OptIn(ExperimentalReadiumApi::class)
@@ -206,6 +207,9 @@ class ReaderPlatformView(
                 }
             },
             configuration = ReadingFonts.configuration().apply {
+                // Flutter's band above the page already clears the notch; Readium adding it
+                // again doubled the space over the text.
+                shouldApplyInsetsPadding = false
                 selectionActionModeCallback = SelectionMenu(
                     onAction = ::onSelectionAction,
                     onActiveChanged = { active ->
@@ -315,6 +319,10 @@ class ReaderPlatformView(
             }
             "firstVisibleSentence" -> scope.launch {
                 result.success(sentenceLocator(navigator, FIRST_VISIBLE_SCRIPT)?.toJSON()?.toString())
+            }
+            "clearSelection" -> {
+                navigator.clearSelection()
+                result.success(null)
             }
             "insertTranslation" -> {
                 val id = call.argument<String>("id")
@@ -441,6 +449,12 @@ class ReaderPlatformView(
             } else {
                 null
             }
+            // For sharing as a page: the paragraphs around the selection, read before it's cleared.
+            val pageContext = if (action == "share") navigator.evaluateJavascript(SHARE_CONTEXT_SCRIPT)?.let {
+                runCatching { JSONObject("{\"v\":$it}").optString("v").takeIf { v -> v.isNotEmpty() && v != "null" } }.getOrNull()
+            } else {
+                null
+            }
             navigator.clearSelection()
             val text = selection.locator.text
             channel.invokeMethod(
@@ -455,6 +469,7 @@ class ReaderPlatformView(
                     "progression" to selection.locator.locations.totalProgression,
                     "paragraphId" to paragraph?.optString("id"),
                     "paragraphText" to paragraph?.optString("text"),
+                    "pageContext" to pageContext,
                 ),
             )
         }
@@ -554,6 +569,63 @@ class ReaderPlatformView(
               return JSON.stringify({ id: id, text: el.innerText });
             })();
         """.trimIndent()
+        /**
+         * The selection with the page around it, for sharing it as a page: about 700 characters
+         * of whole paragraphs before and after it, as `{p: [[[text, selected], …], …]}` (each
+         * paragraph a list of runs, 1 for selected), or null if it isn't in plain paragraphs.
+         */
+        private val SHARE_CONTEXT_SCRIPT = """
+            (function () {
+              var s = window.getSelection();
+              if (!s || !s.rangeCount) return null;
+              var range = s.getRangeAt(0);
+              var BLOCKS = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, dd, dt, figcaption, pre';
+              var all = Array.prototype.filter.call(document.body.querySelectorAll(BLOCKS), function (b) {
+                return !b.querySelector(BLOCKS);
+              });
+              function blockOf(node) {
+                var el = node.nodeType === 1 ? node : node.parentElement;
+                return el && el.closest(BLOCKS);
+              }
+              var i = all.indexOf(blockOf(range.startContainer));
+              var j = all.indexOf(blockOf(range.endContainer));
+              if (i < 0 || j < i) return null;
+              function clean(t) { return t.replace(/\s+/g, ' '); }
+              function piece(block, from, to) {
+                var r = document.createRange();
+                r.selectNodeContents(block);
+                if (from) r.setStart(from[0], from[1]);
+                if (to) r.setEnd(to[0], to[1]);
+                return clean(r.toString());
+              }
+              var paragraphs = [];
+              var budget = 700;
+              for (var k = i - 1; k >= 0 && budget > 0; k--) {
+                var t = clean(all[k].textContent).trim();
+                if (!t) continue;
+                paragraphs.unshift([[t, 0]]);
+                budget -= t.length;
+              }
+              for (var k = i; k <= j; k++) {
+                var start = k === i ? [range.startContainer, range.startOffset] : null;
+                var end = k === j ? [range.endContainer, range.endOffset] : null;
+                var runs = [];
+                if (start) { var lead = piece(all[k], null, start).replace(/^\s+/, ''); if (lead) runs.push([lead, 0]); }
+                var chosen = piece(all[k], start, end);
+                if (chosen.trim()) runs.push([chosen, 1]);
+                if (end) { var tail = piece(all[k], end, null).replace(/\s+$/, ''); if (tail) runs.push([tail, 0]); }
+                if (runs.length) paragraphs.push(runs);
+              }
+              budget = 700;
+              for (var k = j + 1; k < all.length && budget > 0; k++) {
+                var t = clean(all[k].textContent).trim();
+                if (!t) continue;
+                paragraphs.push([[t, 0]]);
+                budget -= t.length;
+              }
+              return JSON.stringify({ p: paragraphs });
+            })();
+        """.trimIndent()
         private const val SETTLE_TIMEOUT_MS = 1500L
 
         /**
@@ -562,11 +634,16 @@ class ReaderPlatformView(
          */
         private val SENTENCE_HELPERS = """
               var BLOCKS = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, dd, dt, figcaption, td, pre';
+              // Readium starts reading aloud from this selector in the book's own file, so
+              // elements the app added to the page don't count.
+              function added(el) {
+                return el.id === 'marginalia-filters' || el.classList.contains('marginalia-translation');
+              }
               function selectorOf(block) {
                 var parts = [];
                 for (var n = block; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
                   var i = 1;
-                  for (var s = n.previousElementSibling; s; s = s.previousElementSibling) i++;
+                  for (var s = n.previousElementSibling; s; s = s.previousElementSibling) if (!added(s)) i++;
                   parts.unshift(n.tagName.toLowerCase() + ':nth-child(' + i + ')');
                 }
                 return 'body > ' + parts.join(' > ');

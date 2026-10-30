@@ -3,4 +3,7 @@
     <dimen name="widget_radius">20dp</dimen>
     <dimen name="widget_inner_radius">10dp</dimen>
     <dimen name="widget_padding">12dp</dimen>
+    <!-- Readium's space above and below the text on a page (its own is 40dp). The clock band
+         and the progress line already frame the page. -->
+    <dimen name="readium_navigator_epub_vertical_padding">34dp</dimen>
 </resources>

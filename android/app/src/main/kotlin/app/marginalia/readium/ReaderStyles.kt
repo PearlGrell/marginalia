@@ -52,7 +52,9 @@ private const val INJECTION = """
     matrix.setAttribute('type', 'matrix');
     filter.appendChild(matrix);
     svg.appendChild(filter);
-    document.body.insertBefore(svg, document.body.firstChild);
+    // Last, not first: the book's own elements keep their places (Listen finds a paragraph
+    // by its position among them, in the book's file, which doesn't have this).
+    document.body.appendChild(svg);
     update();
     new MutationObserver(update).observe(document.documentElement, {
       attributes: true,

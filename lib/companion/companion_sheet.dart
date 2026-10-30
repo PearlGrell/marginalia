@@ -161,11 +161,11 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
   Future<void> _summariesChanged() async {
     final data = _data;
     if (data == null) return;
-    final byIndex = await BookMemory(widget.bookId).summaries();
+    final byKey = await BookMemory(widget.bookId).summaries();
     if (!mounted) return;
     setState(() {
       _summaries = {
-        for (final c in data.chapters) c.number: ?byIndex[c.index],
+        for (final c in data.chapters) c.number: ?byKey[c.key],
       };
     });
   }

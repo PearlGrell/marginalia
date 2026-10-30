@@ -28,7 +28,7 @@ import 'page_turn/turn_painters.dart';
 import '../listen/listen_controller.dart';
 import '../listen/player_bar.dart';
 import '../share/share_sheet.dart' show shareText;
-import '../share/story_card.dart';
+import '../share/page_card.dart';
 import '../stats/reading_stats.dart';
 import '../storage/local_store.dart';
 import '../translate/translate_sheet.dart';
@@ -228,7 +228,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           publication: publication,
           title: title,
           authors: authors,
-          onChapterFinished: (_) => summaries.catchUp(bookId: widget.bookId, title: title, authors: authors),
+          onChapterFinished: () => summaries.catchUp(bookId: widget.bookId, title: title, authors: authors),
         );
       }
       _startSession();
@@ -423,8 +423,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         await Clipboard.setData(ClipboardData(text: selection.text ?? ''));
         _say('Copied');
       case 'share':
-        final quote = selection.text?.trim() ?? '';
-        if (quote.isNotEmpty && mounted) await _shareSelection(quote);
+        if ((selection.text?.trim() ?? '').isNotEmpty && mounted) await _shareSelection(selection);
       case 'highlight':
         final id = await store.addHighlight(widget.bookId, selection);
         HapticFeedback.selectionClick();
@@ -501,8 +500,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
-  /// Selected text, as a story image or as plain text.
-  Future<void> _shareSelection(String quote) async {
+  /// Selected text, as an image of its page or as plain text.
+  Future<void> _shareSelection(ReaderSelection selection) async {
+    final quote = selection.text!.trim();
     final book = _book;
     final title = book?.title ?? _publication?.title ?? '';
     final authors = book?.authors ?? _publication?.authors ?? const <String>[];
@@ -515,7 +515,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             ListTile(
               leading: const Icon(Icons.auto_awesome_mosaic_outlined),
               title: const Text('Share as an image'),
-              subtitle: const Text('A story-sized card with the cover'),
+              subtitle: const Text('The passage on its page, story-sized'),
               onTap: () => Navigator.pop(context, 'image'),
             ),
             ListTile(
@@ -531,41 +531,46 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
     if (!mounted || choice == null) return;
     if (choice == 'image') {
-      await showStorySheet(
+      await showPageShareSheet(
         context,
-        StoryContent(
-          quote: quote,
+        PageCardContent(
+          excerpt: PageExcerpt.fromJson(selection.pageContext) ??
+              PageExcerpt.around(selection.before, quote, selection.after),
           title: title,
           author: authors.join(', '),
-          accent: ref.read(annotationStoreProvider).lastColor.onLight,
-          coverColor: book?.coverColor == null ? null : Color(book!.coverColor!),
+          coverColor: _coverColor,
           coverPath: book?.coverPath,
         ),
+        reading: _pageColors,
       );
     } else {
       await shareText('“$quote”\n— $title${authors.isEmpty ? '' : ', ${authors.join(', ')}'}');
     }
   }
 
-  /// The passage as a story card, with the book's title, author and cover tint.
+  /// A highlight as an image of its page, with the book's title, author and cover.
   Future<void> _shareStory(String annotationId) async {
     final annotation = await _db.getAnnotation(annotationId);
     final quote = annotation?.selectedText;
     if (annotation == null || quote == null || !mounted) return;
     final book = _book;
-    await showStorySheet(
+    await showPageShareSheet(
       context,
-      StoryContent(
-        quote: quote,
-        note: annotation.note,
+      PageCardContent(
+        excerpt: PageExcerpt.around(annotation.textBefore, quote, annotation.textAfter),
         title: book?.title ?? _publication?.title ?? '',
         author: (book?.authors ?? _publication?.authors ?? const []).join(', '),
-        accent: annotation.highlightColor.onLight,
-        coverColor: book?.coverColor == null ? null : Color(book!.coverColor!),
+        coverColor: _coverColor,
         coverPath: book?.coverPath,
       ),
+      reading: _pageColors,
     );
   }
+
+  /// The page colors the book is being read in.
+  PageColors get _pageColors => ref
+      .read(readerPreferencesProvider)
+      .resolvePage(MediaQuery.platformBrightnessOf(context), coverColor: _coverColor);
 
   // ---- Search ----
 
@@ -774,21 +779,26 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         value: systemBarsFor(theme.brightness),
         child: Scaffold(
           backgroundColor: theme.page,
-          body: Stack(
-            fit: StackFit.expand,
-            children: [
-              Column(
-                children: [
-                  if (_publication != null) _buildHeader(theme, showClock: prefs.showClock),
-                  Expanded(child: _buildPages(prefs, theme, readium)),
-                  if (listening) PlayerBar(theme: theme),
-                  if (_publication != null) _buildFooter(theme),
-                ],
-              ),
-              if (_search.index != null && !_chromeVisible) _buildSearchBar(theme),
-              _buildTopBar(theme),
-              _buildBottomPanel(theme),
-            ],
+          body: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: _onPointerDown,
+            onPointerUp: _onPointerUp,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Column(
+                  children: [
+                    if (_publication != null) _buildHeader(theme, showClock: prefs.showClock),
+                    Expanded(child: _buildPages(prefs, theme, readium)),
+                    if (listening) PlayerBar(theme: theme),
+                    if (_publication != null) _buildFooter(theme),
+                  ],
+                ),
+                if (_search.index != null && !_chromeVisible) _buildSearchBar(theme),
+                _buildTopBar(theme),
+                _buildBottomPanel(theme),
+              ],
+            ),
           ),
         ),
       ),
@@ -796,6 +806,25 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   Color? get _coverColor => _book?.coverColor == null ? null : Color(_book!.coverColor!);
+
+  /// Where and when a touch began, to tell a tap from a long press or a drag.
+  ({Offset at, DateTime when})? _touch;
+
+  void _onPointerDown(PointerDownEvent event) => _touch = (at: event.position, when: DateTime.now());
+
+  /// A tap anywhere while text is selected (the page, the bands around it) ends the selection,
+  /// as a tap outside selected text does everywhere else. The selection's own menu and handles
+  /// aren't Flutter's, so touching them doesn't come here; a long press (choosing other text)
+  /// or a drag doesn't count.
+  void _onPointerUp(PointerUpEvent event) {
+    final touch = _touch;
+    _touch = null;
+    if (!_selecting || touch == null) return;
+    final tap = (event.position - touch.at).distance < 12 && DateTime.now().difference(touch.when) < const Duration(milliseconds: 350);
+    if (!tap) return;
+    _controller?.clearSelection();
+    setState(() => _selecting = false);
+  }
 
   Widget _buildPages(ReaderPreferences prefs, PageColors theme, Map<String, Object?> readium) {
     final publication = _publication;
@@ -1203,14 +1232,18 @@ class _ReadiumPageSource implements PageSource {
 
   final ReadiumViewController _controller;
 
-  @override
-  Future<ui.Image?> snapshot() => _controller.snapshot();
+  // A view that never answers (closed mid-turn, a page that never settles) mustn't hold a
+  // turn, and its pictures, on screen: no picture, or no move, after a few seconds.
+  static const _wait = Duration(seconds: 3);
 
   @override
-  Future<bool> goForward() => _controller.goForward();
+  Future<ui.Image?> snapshot() => _controller.snapshot().timeout(_wait, onTimeout: () => null);
 
   @override
-  Future<bool> goBackward() => _controller.goBackward();
+  Future<bool> goForward() => _controller.goForward().timeout(_wait, onTimeout: () => false);
+
+  @override
+  Future<bool> goBackward() => _controller.goBackward().timeout(_wait, onTimeout: () => false);
 
   @override
   bool operator ==(Object other) =>

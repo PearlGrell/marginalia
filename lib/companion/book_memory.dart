@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,62 +13,217 @@ import 'conversation.dart';
 import 'gemma.dart';
 import 'people.dart';
 
-/// One of the book's story chapters: its place in the reading order, its number among the
-/// story chapters (what the reader sees: "Ch 3 of 12") and its title.
+/// A section of the book, from its contents: a story chapter, or front or back matter (kept
+/// out of the story). A section can start part-way into one of the book's files (many books
+/// put several chapters in a file): [heading] is the contents' title for it, found in the text
+/// to tell where it starts.
 class StoryChapter {
-  const StoryChapter({required this.index, required this.number, required this.title});
+  const StoryChapter({required this.key, required this.index, required this.number, required this.title, this.heading});
 
-  /// Reading-order index.
+  /// Its place among all the book's sections: what its summary is kept by.
+  final int key;
+
+  /// Reading-order index of the file it starts in.
   final int index;
 
-  /// 1-based, among story chapters only.
+  /// 1-based, among story chapters only (what the reader sees: "Ch 3 of 12"); 0 for front and
+  /// back matter.
   final int number;
   final String title;
 
-  Map<String, Object?> toJson() => {'i': index, 'n': number, 't': title};
+  /// Its title in the contents when it starts part-way into its file; null when it starts the
+  /// file.
+  final String? heading;
 
-  static StoryChapter fromJson(Map<String, Object?> json) =>
-      StoryChapter(index: json['i']! as int, number: json['n']! as int, title: json['t']! as String);
+  bool get isStory => number > 0;
+
+  Map<String, Object?> toJson() => {'i': index, 'n': number, 't': title, 'h': ?heading};
+
+  static StoryChapter fromJson(Map<String, Object?> json, int key) => StoryChapter(
+    key: key,
+    index: json['i']! as int,
+    number: json['n']! as int,
+    title: json['t']! as String,
+    heading: json['h'] as String?,
+  );
 }
 
 /// Front and back matter: not part of the story, so never kept, summarised or searched.
 final _notStory = RegExp(
-  r'project gutenberg|table of contents|^contents$|copyright|licen[cs]e|title ?page|^cover$|dedication|colophon|about the (author|publisher)|also by',
+  r'project gutenberg|table of contents|^contents$|copyright|licen[cs]e|title ?page|^cover$|dedication|colophon|'
+  r'about the (author|publisher)|also by|^(preface|foreword|introduction|etymology|extracts|epigraph|'
+  r'acknowledge?ments?|bibliography|index|glossary|footnotes|endnotes|notes|illustrations|list of illustrations|'
+  r"transcriber[’']?s note)\b|\bedition\b",
   caseSensitive: false,
 );
 
-/// The book's story chapters, from its reading order and table of contents: items longer than a
-/// page whose title doesn't say front or back matter, numbered as the reader sees them.
+/// A part or book of a novel ("Book the First—Recalled to Life", "Part Two"), when its
+/// chapters have their own entries: a heading, not a chapter.
+final _division = RegExp(r'^(book|part|volume)\b', caseSensitive: false);
+
+/// The book's sections, from its contents (and the files the contents leave out, if they're
+/// longer than a page): story chapters numbered as the reader sees them, front and back matter
+/// and the book's own title page left out of the story.
 List<StoryChapter> storyChaptersOf(PublicationInfo publication) {
-  final titles = <String, String>{};
+  final order = [for (final c in publication.chapters) _path(c.href)];
+  int? fileOf(String href) {
+    final path = _path(href);
+    final i = order.indexOf(path);
+    if (i >= 0) return i;
+    final j = order.indexWhere((o) => o.endsWith(path) || path.endsWith(o));
+    return j < 0 ? null : j;
+  }
+
+  // The contents' leaves, in reading order: a part with chapters of its own is its chapters.
+  final leaves = <({int file, String title, bool fragment})>[];
   void walk(List<TocEntry> entries) {
     for (final e in entries) {
-      titles.putIfAbsent(_path(e.href), () => e.title.trim());
-      walk(e.children);
+      if (e.children.isNotEmpty) {
+        // The part's own page, when it has a file of its own.
+        final file = fileOf(e.href);
+        if (file != null && !e.children.any((c) => fileOf(c.href) == file)) {
+          leaves.add((file: file, title: e.title.trim(), fragment: e.href.contains('#')));
+        }
+        walk(e.children);
+        continue;
+      }
+      if (fileOf(e.href) case final file?) leaves.add((file: file, title: e.title.trim(), fragment: e.href.contains('#')));
     }
   }
 
   walk(publication.toc);
+  // Stable: the contents' order within a file.
+  final indexed = [...leaves.indexed]..sort((a, b) => a.$2.file != b.$2.file ? a.$2.file.compareTo(b.$2.file) : a.$1.compareTo(b.$1));
+  final sorted = [for (final (_, l) in indexed) l];
+
+  final bookTitle = _words(publication.title).join();
   final out = <StoryChapter>[];
-  for (final (index, chapter) in publication.chapters.indexed) {
-    if (chapter.count <= 1) continue;
-    final path = _path(chapter.href);
-    final title = titles[path] ?? titles.entries.where((e) => e.key.endsWith(path) || path.endsWith(e.key)).firstOrNull?.value ?? '';
-    if (title.isNotEmpty && _notStory.hasMatch(title)) continue;
-    out.add(StoryChapter(index: index, number: out.length + 1, title: title));
+  var number = 0;
+  void add(int file, String title, {String? heading, required bool story}) {
+    out.add(StoryChapter(key: out.length, index: file, number: story ? ++number : 0, title: title, heading: heading));
+  }
+
+  for (final (file, chapter) in publication.chapters.indexed) {
+    final here = [for (final l in sorted) if (l.file == file) l];
+    if (here.isEmpty) {
+      // A file the contents leave out: a chapter of its own if it's more than a page.
+      if (chapter.count > 1) add(file, '', story: true);
+      continue;
+    }
+    for (final (i, l) in here.indexed) {
+      final front = _notStory.hasMatch(l.title) || (bookTitle.isNotEmpty && _words(l.title).join() == bookTitle);
+      final division = _division.hasMatch(l.title) && i + 1 < here.length;
+      add(file, l.title, heading: l.fragment || i > 0 ? l.title : null, story: !front && !division);
+    }
   }
   return out;
 }
 
 String _path(String href) => href.split('#').first.replaceFirst(RegExp(r'^/+'), '');
 
+/// [text]'s words, lowercased, letters and digits only.
+List<String> _words(String text) =>
+    text.toLowerCase().split(RegExp(r'[^\p{L}\p{N}]+', unicode: true)).where((w) => w.isNotEmpty).toList();
+
+/// Whether paragraph [text] is the heading the contents call [title]: the same words, or the
+/// start or end of them ("CHAPTER II." for "I hope Mr. Bingley will like it. CHAPTER II."), or
+/// the contents' title starting a longer heading ("Chapter 3" for "Chapter 3: The Visit").
+bool isHeading(String text, String title) {
+  if (text.length > 160) return false;
+  final p = _words(text), t = _words(title);
+  if (p.isEmpty || t.isEmpty) return false;
+  if (p.join() == t.join()) return true;
+  bool startsWith(List<String> a, List<String> b) => a.length >= b.length && List.generate(b.length, (i) => a[i] == b[i]).every((x) => x);
+  bool endsWith(List<String> a, List<String> b) => startsWith(a.reversed.toList(), b.reversed.toList());
+  bool enough(List<String> w) => w.join().length >= 5;
+  return (enough(p) && (startsWith(t, p) || endsWith(t, p))) || (enough(t) && startsWith(p, t));
+}
+
+/// A paragraph kept of the book: its file (reading-order index) and progression in it.
+typedef KeptParagraph = ({int chapter, double progression, String text});
+
+/// Which of [sections] each of [paragraphs] (in reading order) is in, by index into
+/// [sections]; -1 before the first.
+///
+/// A section starts where its heading is: the last place in its file the heading comes before
+/// the next section's start (a list of contents or illustrations comes before the chapters it
+/// lists), and not in such a list (short lines with other headings among them). A file's first
+/// section whose heading isn't found starts the file; a later one is left empty, its text
+/// staying with the section before.
+List<int> sectionsOf(List<StoryChapter> sections, List<KeptParagraph> paragraphs) {
+  final byFile = <int, List<int>>{};
+  for (final (j, s) in sections.indexed) {
+    (byFile[s.index] ??= []).add(j);
+  }
+  final starts = <int, int>{};
+  for (var from = 0; from < paragraphs.length;) {
+    final file = paragraphs[from].chapter;
+    var end = from;
+    while (end < paragraphs.length && paragraphs[end].chapter == file) {
+      end++;
+    }
+    final here = byFile[file] ?? const <int>[];
+    final headings = [for (final j in here) ?sections[j].heading];
+    // Short lines (page numbers aside) with another of the file's headings among them.
+    bool listed(int at) {
+      final next = paragraphs.sublist(at + 1, end).where((q) => q.text.length > 4).take(6).toList();
+      if (next.isEmpty || next.take(3).any((q) => q.text.length > 100)) return false;
+      return next.any((q) => headings.any((h) => isHeading(q.text, h) && !isHeading(paragraphs[at].text, h)));
+    }
+
+    var bound = end;
+    for (final (k, j) in here.indexed.toList().reversed) {
+      final heading = sections[j].heading;
+      int? at;
+      if (heading != null) {
+        for (var p = bound - 1; p >= from; p--) {
+          if (isHeading(paragraphs[p].text, heading) && !listed(p)) {
+            at = p;
+            break;
+          }
+        }
+      }
+      if (at == null && k == 0) at = from;
+      if (at != null) {
+        starts[j] = at;
+        bound = at;
+      }
+    }
+    from = end;
+  }
+
+  final out = List.filled(paragraphs.length, -1);
+  var current = -1;
+  int? file;
+  final starting = <int, List<int>>{};
+  for (final MapEntry(key: j, value: at) in starts.entries) {
+    (starting[at] ??= []).add(j);
+  }
+  for (var i = 0; i < paragraphs.length; i++) {
+    if (paragraphs[i].chapter != file) {
+      file = paragraphs[i].chapter;
+      // Sections of files not kept in between: the text carries on from the last of them.
+      current = math.max(current, sections.lastIndexWhere((s) => s.index < file!));
+    }
+    if (starting[i] case final js?) current = js.reduce(math.max);
+    out[i] = current;
+  }
+  return out;
+}
+
+/// Whether [text] isn't the book's: Project Gutenberg's notices, illustration captions.
+bool isBoilerplate(String text) => _boilerplate.hasMatch(text);
+
+final _boilerplate = RegExp(r'project gutenberg|^\[?illustration\b|^(heading|tailpiece) to (chapter|preface)\b', caseSensitive: false);
+
 /// Where the reader is: a reading-order index and how far through it.
 typedef Place = ({int chapter, double progression});
 
 /// What the companion keeps of a book, on the phone, as it's read: the text a page at a time
-/// (`text.jsonl`, never the whole book at once), how far each chapter is kept (`state.json`) and
-/// each finished chapter's summary (`summaries.json`). Chapters before the reader's page that
-/// weren't paged through (a jump ahead) are filled in later, a chapter at a time.
+/// (`text.jsonl`, never the whole book at once), how far each file is kept (`state.json`, with
+/// the book's sections) and each finished chapter's summary (`section-summaries.json`). Files
+/// before the reader's page that weren't paged through (a jump ahead) are filled in later, one
+/// at a time.
 class BookMemory {
   BookMemory(this.bookId);
 
@@ -93,12 +249,11 @@ class BookMemory {
 
   Future<void> _saveState(Map<String, Object?> state) async => (await _file('state.json')).writeAsString(jsonEncode(state));
 
-  Future<List<StoryChapter>> chapters() async => [
-    for (final c in (await _state())['chapters'] as List? ?? const []) StoryChapter.fromJson((c as Map).cast()),
-  ];
+  /// The book's sections, story chapters and the rest.
+  Future<List<StoryChapter>> chapters() async => _chaptersIn(await _state());
 
-  /// How far each chapter's text is kept (its last paragraph's progression), and which are
-  /// kept to the end.
+  /// How far each file's text is kept (its last paragraph's progression), and which are kept
+  /// to the end.
   Future<({Map<int, double> upTo, Set<int> complete})> kept() async {
     final state = await _state();
     return (
@@ -111,13 +266,14 @@ class BookMemory {
 
   Future<void> setChapters(List<StoryChapter> chapters) async {
     await _saveState((await _state())..['chapters'] = [for (final c in chapters) c.toJson()]);
-    // Whole chapters kept by an earlier version: the page-by-page text replaces them.
+    // Kept by an earlier version: whole chapters (the page-by-page text replaces them), and
+    // summaries of whole files (now they're of chapters).
     await for (final f in (await _dir()).list()) {
-      if (f is File && RegExp(r'chapter-\d+\.json$').hasMatch(f.path)) await f.delete();
+      if (f is File && RegExp(r'(chapter-\d+|[/\\]summaries)\.json$').hasMatch(f.path)) await f.delete();
     }
   }
 
-  Future<void> _append(List<({int chapter, double progression, String text})> paragraphs) async {
+  Future<void> _append(List<KeptParagraph> paragraphs) async {
     if (paragraphs.isEmpty) return;
     final out = StringBuffer();
     for (final p in paragraphs) {
@@ -126,15 +282,15 @@ class BookMemory {
     await (await _file('text.jsonl')).writeAsString(out.toString(), mode: FileMode.append, flush: true);
   }
 
-  /// Keeps chapter [chapter]'s text up to [progression] (all of it at 1), reading out of the
-  /// book only what isn't kept yet. True when that finished the chapter.
-  Future<bool> keep(Readium readium, String publicationId, int chapter, double progression) async {
+  /// Keeps file [chapter]'s text up to [progression] (all of it at 1), reading out of the book
+  /// only what isn't kept yet. Says whether that finished the file, and what it kept.
+  Future<({bool finished, List<String> kept})> keep(Readium readium, String publicationId, int chapter, double progression) async {
     final state = await _state();
     final upTo = ((state['upTo'] as Map?) ?? {}).cast<String, Object?>();
     final complete = {for (final c in (state['complete'] as List?) ?? const []) c as int};
-    if (complete.contains(chapter)) return false;
+    if (complete.contains(chapter)) return (finished: false, kept: const <String>[]);
     final from = (upTo['$chapter'] as num?)?.toDouble() ?? -1;
-    if (progression <= from) return false;
+    if (progression <= from) return (finished: false, kept: const <String>[]);
     final paragraphs = await readium.textRange(
       publicationId,
       fromChapter: chapter,
@@ -151,12 +307,12 @@ class BookMemory {
         ..['upTo'] = upTo
         ..['complete'] = complete.toList(),
     );
-    return finished;
+    return (finished: finished, kept: [for (final p in paragraphs) p.text]);
   }
 
-  /// Summaries by reading-order index ('' for a chapter with nothing to tell).
+  /// Summaries by section key ('' for a chapter with nothing to tell).
   Future<Map<int, String>> summaries() async {
-    final file = await _file('summaries.json');
+    final file = await _file('section-summaries.json');
     if (!await file.exists()) return {};
     return {
       for (final MapEntry(:key, :value) in (jsonDecode(await file.readAsString()) as Map).entries)
@@ -164,17 +320,13 @@ class BookMemory {
     };
   }
 
-  Future<void> keepSummary(int chapter, String summary) async {
-    final all = await summaries()..[chapter] = summary;
-    await (await _file('summaries.json')).writeAsString(jsonEncode({for (final e in all.entries) '${e.key}': e.value}));
+  Future<void> keepSummary(int key, String summary) async {
+    final all = await summaries()..[key] = summary;
+    await (await _file('section-summaries.json')).writeAsString(jsonEncode({for (final e in all.entries) '${e.key}': e.value}));
   }
 
-  /// Chapter [chapter]'s kept paragraphs, in order.
-  Future<List<String>> chapterText(int chapter) async => [
-    for (final p in await _paragraphs()) if (p.chapter == chapter) p.text,
-  ];
-
-  Future<List<({int chapter, double progression, String text})>> _paragraphs() async {
+  /// Everything kept of the book, in reading order.
+  Future<List<KeptParagraph>> paragraphs() async {
     final file = await _file('text.jsonl');
     if (!await file.exists()) return const [];
     return _parse(await file.readAsString());
@@ -195,11 +347,29 @@ class BookMemory {
   }
 }
 
-List<({int chapter, double progression, String text})> _parse(String jsonl) => [
+List<StoryChapter> _chaptersIn(Map<String, Object?> state) => [
+  for (final (i, c) in ((state['chapters'] as List?) ?? const []).indexed) StoryChapter.fromJson((c as Map).cast(), i),
+];
+
+/// The kept text, in reading order, without what isn't the book's (see [isBoilerplate]).
+List<KeptParagraph> _parse(String jsonl) => [
   for (final line in const LineSplitter().convert(jsonl))
     if (line.isNotEmpty)
-      if (jsonDecode(line) case {'c': final int c, 'p': final num p, 't': final String t}) (chapter: c, progression: p.toDouble(), text: t),
-];
+      if (jsonDecode(line) case {'c': final int c, 'p': final num p, 't': final String t} when !isBoilerplate(t))
+        (chapter: c, progression: p.toDouble(), text: t),
+]..sort((a, b) => a.chapter != b.chapter ? a.chapter.compareTo(b.chapter) : a.progression.compareTo(b.progression));
+
+/// The story chapters finished (a later section has begun, or the file they end is kept to its
+/// end) in [sections], given which section each kept paragraph is in ([placed]) and the files
+/// kept to the end.
+Set<int> finishedChapters(List<StoryChapter> sections, List<int> placed, Set<int> completeFiles) {
+  final latest = placed.fold(-1, math.max);
+  return {
+    for (final (i, s) in sections.indexed)
+      if (s.isStory && (i < latest || (completeFiles.contains(s.index) && !sections.skip(i + 1).any((n) => n.index == s.index))))
+        i,
+  };
+}
 
 /// Everything the companion sheet shows, worked out at once (in an isolate).
 class BookData {
@@ -231,32 +401,39 @@ Future<BookData> buildBookData(String dir, Place place, String title, String? au
     return await file.exists() ? file.readAsString() : null;
   }
 
-  final state = (jsonDecode(await read('state.json') ?? '{}') as Map).cast<String, Object?>();
-  final chapters = [
-    for (final c in (state['chapters'] as List?) ?? const []) StoryChapter.fromJson((c as Map).cast()),
-  ];
-  final byIndex = {for (final c in chapters) c.index: c};
-  final summariesJson = (jsonDecode(await read('summaries.json') ?? '{}') as Map).cast<String, Object?>();
+  final sections = _chaptersIn((jsonDecode(await read('state.json') ?? '{}') as Map).cast<String, Object?>());
+  final summariesJson = (jsonDecode(await read('section-summaries.json') ?? '{}') as Map).cast<String, Object?>();
 
   // Never past the page: the reader may have gone back.
   bool before(int chapter, double progression) =>
       chapter < place.chapter || chapter == place.chapter && progression <= place.progression;
-  final kept = [
+  final all = [
     for (final p in _parse(await read('text.jsonl') ?? ''))
-      if (byIndex.containsKey(p.chapter) && before(p.chapter, p.progression)) p,
-  ]..sort((a, b) => a.chapter != b.chapter ? a.chapter.compareTo(b.chapter) : a.progression.compareTo(b.progression));
+      if (before(p.chapter, p.progression)) p,
+  ];
+  final placed = sectionsOf(sections, all);
 
-  // Story numbers from here on: chapter N is paragraph chapter N - 1.
-  final paragraphs = [for (final p in kept) (chapter: byIndex[p.chapter]!.number - 1, text: p.text)];
-  final current = byIndex[place.chapter];
-  final upTo = [for (final c in chapters) if (c.index <= place.chapter) c];
+  // Where the reader is: the section of the last paragraph kept up to the page, or the one
+  // the page's file starts with.
+  final here = placed.isNotEmpty && all.last.chapter == place.chapter
+      ? placed.last
+      : sections.lastIndexWhere((s) => s.index <= place.chapter && s.heading == null);
+  final current = here >= 0 && sections[here].isStory ? sections[here] : null;
+
+  // Story chapters only, numbered from here on as chapter N is paragraph chapter N - 1.
+  final paragraphs = [
+    for (final (i, p) in all.indexed)
+      if (placed[i] >= 0 && sections[placed[i]].isStory) (chapter: sections[placed[i]].number - 1, text: p.text),
+  ];
+  final upTo = [for (final (i, c) in sections.indexed) if (c.isStory && i <= here) c];
   final book = BookSoFar(
     title: title,
     authors: authors,
     paragraphs: paragraphs,
     summaries: {
-      for (final e in summariesJson.entries)
-        if (byIndex[int.parse(e.key)] case final c? when c.index < place.chapter) c.number - 1: e.value! as String,
+      for (final c in upTo)
+        if (c != current)
+          if (summariesJson['${c.key}'] case final String summary) c.number - 1: summary,
     },
     titles: {for (final c in upTo) c.number: c.title},
     chapterNow: current?.number,
@@ -268,15 +445,15 @@ Future<BookData> buildBookData(String dir, Place place, String title, String? au
     current: current,
     keySentences: {
       for (final c in upTo)
-        if (c.index < place.chapter && !summariesJson.containsKey('${c.index}')) c.number: book.keySentences(c.number),
+        if (c != current && !summariesJson.containsKey('${c.key}')) c.number: book.keySentences(c.number),
     },
   );
 }
 
 /// Keeps a book's text as it's read: a page at a time after each turn (a moment after, so
-/// flicking through doesn't read anything), and the chapters before the page that weren't
-/// paged through, one at a time in the background. Finished chapters get their summaries
-/// (see [ChapterSummaries]).
+/// flicking through doesn't read anything), and the files before the page that weren't paged
+/// through, one at a time in the background. Finished chapters get their summaries (see
+/// [ChapterSummaries]).
 class BookKeeper {
   BookKeeper({
     required this.bookId,
@@ -291,12 +468,16 @@ class BookKeeper {
   final String title;
   final String? authors;
   final BookMemory memory;
-  final void Function(int chapter) onChapterFinished;
+
+  /// A chapter may have just finished: its summary can be written.
+  final void Function() onChapterFinished;
 
   static const _readium = Readium();
 
   late final List<StoryChapter> _chapters = storyChaptersOf(publication);
-  late final Set<int> _story = {for (final c in _chapters) c.index};
+
+  /// The files that hold story (reading-order indexes), in order.
+  late final List<int> _storyFiles = {for (final c in _chapters) if (c.isStory) c.index}.toList()..sort();
   Future<void>? _ready;
   Timer? _debounce;
   Place? _pending;
@@ -332,39 +513,41 @@ class BookKeeper {
     return _work = _work.then((_) => _keep(place)).catchError((_) {});
   }
 
+  /// Keeps file [file] up to [progression]; says when that may have finished a chapter (the
+  /// file ended, or a later chapter's heading came).
+  Future<void> _keepFile(int file, double progression) async {
+    final (:finished, :kept) = await memory.keep(_readium, publication.id, file, progression);
+    final headings = [for (final c in _chapters) if (c.index == file && c.heading != null) c.heading!];
+    if (finished || kept.any((t) => headings.any((h) => isHeading(t, h)))) onChapterFinished();
+  }
+
   Future<void> _keep(Place place) async {
     if (_closed) return;
     await _start();
-    if (!_story.contains(place.chapter)) return;
-    // The chapter before, if the reader just turned out of it: kept to its end now.
-    final previous = _chapters.where((c) => c.index < place.chapter).lastOrNull;
+    if (!_storyFiles.contains(place.chapter)) return;
+    // The file before, if the reader just turned out of it: kept to its end now.
+    final previous = _storyFiles.where((f) => f < place.chapter).lastOrNull;
     if (previous != null) {
       final (:upTo, :complete) = await memory.kept();
-      if (!complete.contains(previous.index) && upTo.containsKey(previous.index)) {
-        if (await memory.keep(_readium, publication.id, previous.index, 1)) onChapterFinished(previous.index);
-      }
+      if (!complete.contains(previous) && upTo.containsKey(previous)) await _keepFile(previous, 1);
     }
-    await memory.keep(_readium, publication.id, place.chapter, place.progression);
+    await _keepFile(place.chapter, place.progression);
     unawaited(_fillGaps(place.chapter));
   }
 
-  /// Chapters before [chapter] not kept to their end (jumped over, or read before the app kept
-  /// books): kept now, nearest first, one chapter a step with a pause between.
-  Future<void> _fillGaps(int chapter) async {
+  /// Files before [file] not kept to their end (jumped over, or read before the app kept books):
+  /// kept now, nearest first, one file a step with a pause between.
+  Future<void> _fillGaps(int file) async {
     if (_filling) return;
     _filling = true;
     try {
       while (!_closed) {
         final (:upTo, :complete) = await memory.kept();
-        final gap = _chapters.reversed
-            .where((c) => c.index < chapter && !complete.contains(c.index) && !_tried.contains(c.index))
-            .firstOrNull;
+        final gap = _storyFiles.reversed.where((f) => f < file && !complete.contains(f) && !_tried.contains(f)).firstOrNull;
         if (gap == null) break;
         // Once each while the book is open: one that can't be read isn't tried over and over.
-        _tried.add(gap.index);
-        await (_work = _work.then((_) async {
-          if (await memory.keep(_readium, publication.id, gap.index, 1)) onChapterFinished(gap.index);
-        }).catchError((_) {}));
+        _tried.add(gap);
+        await (_work = _work.then((_) => _keepFile(gap, 1)).catchError((_) {}));
         await Future<void>.delayed(const Duration(milliseconds: 400));
       }
     } finally {
@@ -380,7 +563,8 @@ class BookKeeper {
 
 /// Writes chapter summaries in the background, from the kept text: one at a time, newest first,
 /// with whichever model the phone has (none: nothing). The reader keeps the text; nothing is
-/// read out of the book here.
+/// read out of the book here. A question asked in the companion goes first: each summary waits
+/// until nothing is being answered.
 class ChapterSummaries extends Notifier<int> {
   /// Bumped each time a summary is written, for what shows them.
   @override
@@ -408,38 +592,42 @@ class ChapterSummaries extends Notifier<int> {
 
   Future<void> _summarise(String bookId, String title, String? authors) async {
     final nano = await const Nano().status() == NanoStatus.available;
+    final gemma = ref.read(gemmaProvider.notifier);
     if (!nano && !ref.read(gemmaProvider).installed) return;
     final memory = BookMemory(bookId);
-    final chapters = await memory.chapters();
-    final (:upTo, :complete) = await memory.kept();
+    final sections = await memory.chapters();
+    final paragraphs = await memory.paragraphs();
+    final placed = sectionsOf(sections, paragraphs);
+    final finished = finishedChapters(sections, placed, (await memory.kept()).complete);
     final done = await memory.summaries();
-    for (final chapter in chapters.reversed) {
-      if (!complete.contains(chapter.index) || done.containsKey(chapter.index)) continue;
-      final text = await memory.chapterText(chapter.index);
+    for (final i in finished.toList().reversed) {
+      final chapter = sections[i];
+      if (done.containsKey(chapter.key)) continue;
+      final text = [for (final (j, p) in paragraphs.indexed) if (placed[j] == i) p.text];
       if (text.fold(0, (n, p) => n + p.length) < 600) {
-        await memory.keepSummary(chapter.index, '');
+        await memory.keepSummary(chapter.key, '');
         continue;
       }
-      final prompt = _prompt(title, authors, chapter, text);
-      final summary = nano
-          ? await const Nano().generate(prompt)
-          : await ref.read(gemmaProvider.notifier).once(prompt, maxTokens: 90);
+      // Questions in the companion first.
+      if (!nano) await gemma.idle();
+      final prompt = summaryPrompt(title, authors, chapter, text);
+      final summary = nano ? await const Nano().generate(prompt) : await gemma.once(prompt, maxTokens: 90);
       if (summary == null || summary.trim().isEmpty) return;
-      await memory.keepSummary(chapter.index, tidyAnswer(summary));
+      await memory.keepSummary(chapter.key, tidyAnswer(summary));
       state++;
     }
-    if (!nano) await ref.read(gemmaProvider.notifier).releaseIfIdle();
+    if (!nano) await gemma.releaseIfIdle();
   }
 
-  static String _prompt(String title, String? authors, StoryChapter chapter, List<String> text) {
+  /// The prompt for [chapter]'s summary, from its [text] (public for tests).
+  static String summaryPrompt(String title, String? authors, StoryChapter chapter, List<String> text) {
     final key = recapSentences([for (final p in text) (chapter: 0, text: p)], chapters: 1, count: 14);
     final passages = StringBuffer();
     for (final s in key) {
       if (passages.length + s.length > 2400) break;
       passages.writeln('- $s');
     }
-    final name = chapter.title.isEmpty ? 'chapter ${chapter.number}' : 'chapter ${chapter.number}, "${chapter.title}"';
-    return 'These are the key sentences, in order, of $name of "$title"'
+    return 'These are the key sentences, in order, of ${chapterLabel(chapter.number, chapter.title)} of "$title"'
         '${authors == null || authors.isEmpty ? '' : ' by $authors'}.\n\n$passages\n'
         'Summarise what happens in this chapter in two or three plain sentences: who is involved and what '
         'they do. Use only these sentences. No introduction, no lists.';

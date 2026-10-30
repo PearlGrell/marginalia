@@ -302,7 +302,7 @@ class _NoteTile extends ConsumerWidget {
                   case 'copy':
                     await copyNote(context, a);
                   case 'image':
-                    await shareNoteImage(context, a, book);
+                    await shareNoteImage(context, ref, a, book);
                   case 'link':
                     await shareNoteLink(context, ref, a);
                   case 'delete':

@@ -29,7 +29,10 @@ class Person {
 /// [match] as a name: "The Mouse" is the Mouse, "Alice's" (and "Alice's Adventures") is Alice;
 /// null for a contraction ("I'm", "I'll").
 String? _asName(String match) {
-  final words = match.replaceAll('’', "'").replaceFirst(RegExp(r'^(?:The|A|An|And|But|Then|When|Poor|Old|Young)\s+'), '').split(RegExp(r'\s+'));
+  final words = match
+      .replaceAll('’', "'")
+      .replaceFirst(RegExp(r'^(?:The|A|An|And|But|Then|When|Poor|Old|Young|To|From|Dear)\s+'), '')
+      .split(RegExp(r'\s+'));
   final kept = <String>[];
   for (final word in words) {
     if (!word.contains("'")) {
@@ -48,10 +51,18 @@ String? _asName(String match) {
   return name.length < 2 ? null : name;
 }
 
-const _titles = r'(?:Mr|Mrs|Ms|Miss|Dr|Sir|Lady|Lord|Professor|Uncle|Aunt|Madame|Monsieur|Captain|Colonel|King|Queen|Prince|Princess)\.?';
+const _titles = r'(?:Mr|Mrs|Ms|Miss|Dr|Sir|Lady|Lord|Professor|Uncle|Aunt|Madame|Monsieur|Captain|Colonel|King|Queen|Prince|Princess|St)\.?';
 
-/// A name: capitalised words in a row, maybe after a title ("Mr. Casaubon", "Sir James Chettam").
-final _name = RegExp("(?:$_titles\\s+)?[A-Z][\\p{Ll}'’]+(?:\\s+[A-Z][\\p{Ll}'’]+){0,2}", unicode: true);
+/// A capitalised word of a name, "McCarthy" and "MacDonald" too.
+const _nameWord = "(?:Ma?c(?=[A-Z]))?[A-Z][\\p{Ll}'’]+";
+
+/// A name: capitalised words in a row, maybe after a title ("Mr. Casaubon", "Sir James
+/// Chettam"), with "St." or a small particle inside ("Neville St. Clair", "Lady Catherine de
+/// Bourgh").
+final _name = RegExp(
+  "(?:$_titles\\s+)?$_nameWord(?:\\s+(?:St\\.\\s+|(?:de|du|van|von|der|le|la|di|da)\\s+)?$_nameWord){0,2}",
+  unicode: true,
+);
 
 /// Capitalised words that aren't names.
 const _notNames = {
@@ -61,6 +72,9 @@ const _notNames = {
   'Thursday', 'Friday', 'Saturday', 'Sunday', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December', 'God', 'Lord', 'Sir', 'Madam', 'Mr',
   'Mrs', 'Miss', 'English', 'French', 'Christmas', 'Dear', 'Good', 'Perhaps', 'Indeed', 'Still', 'Just',
+  // Forms of address, not anyone in particular.
+  'Majesty', 'Highness', 'Lordship', 'Ladyship', 'Excellency', 'Honour', 'Honor', 'Heaven', 'Heavens',
+  'American', 'Englishman', 'Frenchman', 'Copyright',
 };
 
 /// The people and places of [index], most named first: names said mid-sentence (so not just a
@@ -102,9 +116,11 @@ List<Person> peopleIn(BookIndex index, {int limit = 30, int atLeast = 3}) {
     return !name.contains(' ') ? lower * 3 < counts[name]! : true;
   }).toList();
 
-  // "James" mostly said as part of "Sir James" is "Sir James".
+  // "James" mostly said as part of "Sir James" is "Sir James" (but "Miss Bingley" isn't Mr.
+  // Bingley: a family name after Miss or Mrs is someone else in the family).
+  final family = RegExp(r'^(?:Mr|Mrs|Ms|Miss|Master|Madame|Monsieur|Mademoiselle)\.?\s');
   names.removeWhere(
-    (short) => !short.contains(' ') && names.any((long) => long != short && long.split(RegExp(r'\s+')).contains(short) && counts[long]! * 2 >= counts[short]!),
+    (short) => !short.contains(' ') && names.any((long) => long != short && !family.hasMatch(long) && long.split(RegExp(r'\s+')).contains(short) && counts[long]! * 2 >= counts[short]!),
   );
 
   names.sort((a, b) => counts[b]!.compareTo(counts[a]!));

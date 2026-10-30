@@ -164,7 +164,8 @@ void main() {
     expect(data.current?.number, 3);
     expect(data.book.chapter, 3);
     expect(data.book.titleOf(3), 'CHAPTER III. A Caucus-Race and a Long Tale');
-    expect(data.book.instructions, contains('chapter 3'));
+    // Its own title names it, so that's all the model is told (the book's numbering, not ours).
+    expect(data.book.instructions, contains('They are in "CHAPTER III. A Caucus-Race and a Long Tale"'));
     final text = data.book.index.chunks.map((c) => c.text).join(' ');
     expect(text, isNot(contains('Project Gutenberg')));
     expect(text, isNot(contains('long and sad tale')));

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Continue reading, two cells tall or more (see ContinueReadingWidget.kt). -->
+<!-- Continue reading, two cells tall or more (see ContinueReadingWidget.kt): the cover at full
+     height, then the book, the streak and how far through. A tap anywhere opens the book. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@android:id/background"
     android:layout_width="match_parent"
@@ -7,7 +8,7 @@
     android:background="@drawable/widget_background"
     android:clipToOutline="true"
     android:orientation="horizontal"
-    android:padding="@dimen/widget_padding">
+    android:padding="16dp">
 
     <ImageView
         android:id="@+id/widget_cover"
@@ -17,15 +18,15 @@
         android:background="@drawable/widget_cover_shape"
         android:clipToOutline="true"
         android:contentDescription="@null"
-        android:maxWidth="120dp"
-        android:minWidth="48dp"
+        android:maxWidth="104dp"
+        android:minWidth="56dp"
         android:scaleType="fitCenter"
         android:src="@mipmap/ic_launcher"/>
 
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:layout_marginStart="14dp"
+        android:layout_marginStart="16dp"
         android:layout_weight="1"
         android:orientation="vertical">
 
@@ -33,53 +34,70 @@
             android:id="@+id/widget_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:letterSpacing="0.1"
+            android:fontFamily="sans-serif-medium"
             android:text="@string/widget_label"
-            android:textAllCaps="true"
-            android:textColor="@color/widget_accent"
-            android:textSize="11sp"
-            android:textStyle="bold"/>
+            android:textColor="@color/widget_muted"
+            android:textSize="12sp"/>
 
         <TextView
             android:id="@+id/widget_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
+            android:layout_marginTop="4dp"
             android:ellipsize="end"
             android:fontFamily="serif"
+            android:lineSpacingMultiplier="1.08"
             android:maxLines="2"
             android:text="@string/widget_empty"
             android:textColor="@color/widget_ink"
-            android:textSize="18sp"/>
-
-        <!-- The streak and today's reading (hidden when there's neither). -->
-        <TextView
-            android:id="@+id/widget_status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:textColor="@color/widget_accent"
-            android:textSize="12sp"
-            android:visibility="gone"/>
-
-        <!-- Takes whatever height is left, so the author and progress sit at the bottom. -->
-        <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:minHeight="4dp"/>
+            android:textSize="19sp"/>
 
         <TextView
             android:id="@+id/widget_author"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="4dp"
+            android:layout_marginTop="3dp"
             android:ellipsize="end"
             android:maxLines="1"
             android:textColor="@color/widget_muted"
             android:textSize="13sp"/>
+
+        <!-- Takes whatever height is left, so the streak and progress sit at the bottom. -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:minHeight="6dp"/>
+
+        <!-- The streak and today's reading (hidden when there's neither). -->
+        <LinearLayout
+            android:id="@+id/widget_status_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/widget_status_icon"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_marginEnd="6dp"
+                android:contentDescription="@null"
+                android:src="@drawable/widget_streak"/>
+
+            <TextView
+                android:id="@+id/widget_status"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:fontFeatureSettings="tnum"
+                android:maxLines="1"
+                android:textColor="@color/widget_ink"
+                android:textSize="12sp"/>
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/widget_progress_row"
@@ -88,55 +106,23 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
-            <LinearLayout
+            <ProgressBar
+                android:id="@+id/widget_progress"
+                style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="3dp"
                 android:layout_weight="1"
-                android:orientation="vertical">
+                android:max="100"
+                android:progressDrawable="@drawable/widget_progress"/>
 
-                <TextView
-                    android:id="@+id/widget_percent"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/widget_muted"
-                    android:textSize="12sp"/>
-
-                <ProgressBar
-                    android:id="@+id/widget_progress"
-                    style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_marginTop="4dp"
-                    android:max="100"
-                    android:progressDrawable="@drawable/widget_progress"/>
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/widget_resume"
+            <TextView
+                android:id="@+id/widget_percent"
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:layout_marginStart="12dp"
-                android:background="@drawable/widget_pill"
-                android:gravity="center"
-                android:orientation="horizontal"
-                android:paddingStart="12dp"
-                android:paddingEnd="14dp">
-
-                <ImageView
-                    android:layout_width="16dp"
-                    android:layout_height="16dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/widget_play"/>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:text="@string/widget_resume"
-                    android:textColor="@color/widget_on_accent"
-                    android:textSize="13sp"
-                    android:textStyle="bold"/>
-            </LinearLayout>
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:fontFeatureSettings="tnum"
+                android:textColor="@color/widget_muted"
+                android:textSize="12sp"/>
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>

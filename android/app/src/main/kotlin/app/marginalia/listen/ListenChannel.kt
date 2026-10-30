@@ -43,7 +43,9 @@ import org.readium.r2.shared.util.getOrElse
  * Reading a book aloud with the phone's own text-to-speech, as Leigha or Alex (see
  * [Narrators]) (`marginalia/listen`):
  * - `start {publicationId, locator?, speed, narrator?, language?}` → true; errors
- *   `no_voice` (the phone has no voice for the book's language), `unsupported`
+ *   `no_voice` (the phone has no voice for the book's language), `no_engine` (its
+ *   text-to-speech didn't start), `unsupported` (no text to read, even from the chapter's or
+ *   the book's start)
  * - `play`, `pause`, `nextSentence`, `previousSentence`, `nextChapter`, `previousChapter`,
  *   `goTo {locator}` (reads on from a tapped line: from the sentence in the locator's text)
  *
@@ -141,16 +143,56 @@ class ListenChannel(
         preferences = AndroidTtsPreferences(speed = call.argument<Double>("speed") ?: 1.0)
 
         scope.launch {
-            val navigator = TtsNavigatorFactory(activity.application, publication, AndroidTtsEngineProvider(activity.application))
-                ?.createNavigator(
-                    listener = object : TtsNavigator.Listener {
-                        override fun onStopRequested() = stop()
-                    },
-                    initialLocator = locator,
-                    initialPreferences = preferences,
-                )
-                ?.getOrElse { null }
-                ?: return@launch result.error("unsupported", "This book can't be read aloud.", null)
+            val factory = TtsNavigatorFactory(activity.application, publication, AndroidTtsEngineProvider(activity.application))
+                ?: return@launch result.error("unsupported", "This book has no text to read aloud.", null)
+            // From the page; failing that, the top of its chapter; failing that, the start of
+            // the book (a page with nothing readable from there on, or a place Readium can't
+            // start at).
+            val chapterStart = locator?.let { publication.linkWithHref(it.href)?.let(publication::locatorFromLink) }
+            var engineFailed = false
+            var navigator: TtsNavigator<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice>? = null
+            var startedFrom: Locator? = null
+            for (from in listOf(locator, chapterStart, null).distinct()) {
+                startedFrom = from
+                val created = try {
+                    withTimeoutOrNull(START_TIMEOUT_MS) {
+                        factory.createNavigator(
+                            listener = object : TtsNavigator.Listener {
+                                override fun onStopRequested() = stop()
+                            },
+                            initialLocator = from,
+                            initialPreferences = preferences,
+                        )
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("Listen", "Couldn't start from $from", e)
+                    continue
+                }
+                if (created == null) {
+                    // The phone's speech engine never answered.
+                    android.util.Log.w("Listen", "The text-to-speech engine didn't start in time")
+                    engineFailed = true
+                    break
+                }
+                navigator = created.getOrElse { error ->
+                    android.util.Log.w("Listen", "Couldn't start from $from: ${error.message} (${error.cause?.message})")
+                    if (error is TtsNavigatorFactory.Error.EngineInitialization) engineFailed = true
+                    null
+                }
+                if (navigator != null || engineFailed) break
+            }
+            if (navigator == null) {
+                return@launch if (engineFailed) {
+                    result.error(
+                        "no_engine",
+                        "Your phone's text-to-speech didn't start. Check Settings › System › Languages › Text-to-speech output, then try again.",
+                        null,
+                    )
+                } else {
+                    result.error("unsupported", "This book has no text to read aloud from here.", null)
+                }
+            }
+            if (startedFrom != locator) android.util.Log.i("Listen", "Started from $startedFrom: the page itself couldn't be")
             narrators = narratorsFor(navigator.voices, language)
             if (narrators.isEmpty()) {
                 navigator.close()
@@ -173,7 +215,9 @@ class ListenChannel(
             controller = MediaController.Builder(activity, token).buildAsync()
 
             result.success(true)
-            if (locator?.text?.highlight.isNullOrBlank()) navigator.play() else seek(navigator, null, locator?.text?.highlight)
+            // Started on the page: from its first sentence (Readium starts at its paragraph).
+            val sentence = locator?.text?.highlight.takeIf { startedFrom == locator }
+            if (sentence.isNullOrBlank()) navigator.play() else seek(navigator, null, sentence)
         }
     }
 
@@ -309,6 +353,9 @@ class ListenChannel(
 
     private companion object {
         const val SETTLE_MS = 1500L
+
+        /** How long the phone's speech engine gets to start (it never answers, on some). */
+        const val START_TIMEOUT_MS = 15_000L
 
         /** How far past a tapped paragraph's start to look for the sentence. */
         const val MAX_SKIP = 60

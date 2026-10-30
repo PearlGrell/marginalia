@@ -16,9 +16,9 @@ import android.view.View
 import android.widget.RemoteViews
 
 /**
- * "Continue reading" on the home screen: the book read last, with its cover and progress.
- * Tapping it opens the book. It follows the wallpaper's colors on Android 12 and later, and
- * has a one-row layout for when it's one cell tall. The app keeps it current through [update]
+ * "Continue reading" on the home screen: the book read last, with its cover and progress, in
+ * the app's own paper and ink. Tapping it opens the book. It has a one-row layout for when
+ * it's one cell tall. The app keeps it current through [update]
  * (see DeviceChannel's `updateWidget`), so it never wakes the app itself. The streak line
  * ([updateStatus]) is worked out again each time it's drawn (every half hour at most), so
  * it's right after midnight without the app.
@@ -38,6 +38,9 @@ class ContinueReadingWidget : AppWidgetProvider() {
     ) {
         manager.updateAppWidget(id, views(context, options))
     }
+
+    /** The streak line: its words, and whether a streak is going (it gets the flame). */
+    internal data class Status(val text: String, val streak: Boolean)
 
     companion object {
         private const val PREFS = "marginalia_widget"
@@ -85,22 +88,29 @@ class ContinueReadingWidget : AppWidgetProvider() {
             }
         }
 
-        /** "🔥 5 · 12 of 30 min today", for today as it is now; null when there's nothing to say. */
+        /**
+         * "5-day streak · 12/30 min today", for today as it is now; "5-day streak · read today"
+         * before anything's read today; null when there's nothing to say. Short enough for one
+         * line of the widget.
+         */
         internal fun statusLine(
             today: java.time.LocalDate,
             day: java.time.LocalDate?,
             todaySeconds: Int,
             streak: Int,
             goalMinutes: Int,
-        ): String? {
+        ): Status? {
             // What was saved is from today, or yesterday (nothing read yet today), or older.
             val minutes = if (day == today) todaySeconds / 60 else 0
             val alive = streak > 0 && (day == today || day == today.minusDays(1))
+            val readToday = day == today && todaySeconds >= 60
+            val days = if (streak == 1) "1-day streak" else "$streak-day streak"
+            if (alive && !readToday) return Status("$days · read today", streak = true)
             val parts = buildList {
-                if (alive) add(if (day == today && todaySeconds >= 60) "\uD83D\uDD25 $streak" else "\uD83D\uDD25 $streak \u00b7 read today to keep it")
-                if (goalMinutes > 0) add("$minutes of $goalMinutes min today") else if (minutes > 0) add("$minutes min today")
+                if (alive) add(days)
+                if (goalMinutes > 0) add("$minutes/$goalMinutes min today") else if (minutes > 0) add("$minutes min today")
             }
-            return parts.takeIf { it.isNotEmpty() }?.joinToString(" \u00b7 ")
+            return parts.takeIf { it.isNotEmpty() }?.let { Status(it.joinToString(" · "), streak = alive) }
         }
 
         private fun views(context: Context, options: Bundle?): RemoteViews {
@@ -157,6 +167,7 @@ class ContinueReadingWidget : AppWidgetProvider() {
                 views.setTextViewText(R.id.widget_title, context.getString(R.string.widget_empty))
                 views.setViewVisibility(R.id.widget_progress_row, View.GONE)
                 views.setViewVisibility(R.id.widget_author, View.GONE)
+                if (tall) views.setViewVisibility(R.id.widget_status_row, View.GONE)
                 views.setImageViewResource(R.id.widget_cover, R.mipmap.ic_launcher)
                 return views
             }
@@ -169,15 +180,16 @@ class ContinueReadingWidget : AppWidgetProvider() {
                     streak = prefs.getInt("streak", 0),
                     goalMinutes = prefs.getInt("goalMinutes", 0),
                 )
-                views.setTextViewText(R.id.widget_status, status.orEmpty())
-                views.setViewVisibility(R.id.widget_status, if (status == null) View.GONE else View.VISIBLE)
+                views.setTextViewText(R.id.widget_status, status?.text.orEmpty())
+                views.setViewVisibility(R.id.widget_status_row, if (status == null) View.GONE else View.VISIBLE)
+                views.setViewVisibility(R.id.widget_status_icon, if (status?.streak == true) View.VISIBLE else View.GONE)
             }
 
             val progress = (prefs.getFloat("progress", 0f) * 100).toInt().coerceIn(0, 100)
             views.setTextViewText(R.id.widget_title, prefs.getString("title", ""))
             views.setViewVisibility(R.id.widget_progress_row, View.VISIBLE)
             views.setProgressBar(R.id.widget_progress, 100, progress, false)
-            views.setTextViewText(R.id.widget_percent, if (tall) "$progress% read" else "$progress%")
+            views.setTextViewText(R.id.widget_percent, "$progress%")
             val author = prefs.getString("author", null)
             views.setTextViewText(R.id.widget_author, author.orEmpty())
             views.setViewVisibility(R.id.widget_author, if (author.isNullOrBlank()) View.GONE else View.VISIBLE)
