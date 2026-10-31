@@ -15,7 +15,9 @@ import '../share/share_service.dart' show ShareService;
 ///
 /// Firestore: `clubs/{code}` (the code is the invitation: unguessable, and clubs can't be
 /// listed), with `members/{uid}`, `notes/{annotationId}` and `notes/{id}/comments/{id}`.
-/// Each member keeps `users/{uid}/clubs/{code}` to find their clubs. The book is the same
+/// Each member keeps `users/{uid}/clubs/{code}` to find their clubs. The club's `schedule`
+/// (milestones, set by its owner) is on its document; each member's progress through the book
+/// is on their `members/{uid}`; reactions are `notes/{id}/reactions/{uid}`. The book is the same
 /// file for everyone, so it's matched by its fingerprint.
 class Club {
   const Club({
@@ -99,6 +101,57 @@ class ClubNote {
     final at = rest.indexOf(':');
     return at < 0 ? null : (rest.substring(0, at), rest.substring(at + 1));
   }
+}
+
+/// A member, and how far through the book they last were (0 to 1), if they've said.
+class ClubMember {
+  const ClubMember({required this.uid, required this.name, this.progress});
+
+  final String uid;
+  final String name;
+  final double? progress;
+}
+
+/// A point the club means to reach together: "Up to chapter 10" (40% through) by a date.
+class ClubMilestone {
+  const ClubMilestone({required this.label, required this.fraction, required this.due});
+
+  factory ClubMilestone.fromMap(Map<String, dynamic> m) => ClubMilestone(
+    label: m['label'] as String? ?? '',
+    fraction: ((m['fraction'] as num?)?.toDouble() ?? 0).clamp(0.0, 1.0),
+    due: (m['due'] as Timestamp?)?.toDate() ?? DateTime.now(),
+  );
+
+  final String label;
+
+  /// How far through the book, 0 to 1.
+  final double fraction;
+  final DateTime due;
+
+  Map<String, Object?> toMap() => {'label': label, 'fraction': fraction, 'due': Timestamp.fromDate(due)};
+}
+
+/// The reactions the club can leave on a shared note.
+const clubReactions = ['❤️', '😂', '😮', '😢', '👏', '🤔'];
+
+/// The next milestone not yet reached at [progress], and whether it's overdue at [now]; null
+/// when every milestone is reached (or there are none).
+({ClubMilestone milestone, bool late})? nextMilestone(List<ClubMilestone> schedule, double progress, DateTime now) {
+  final sorted = [...schedule]..sort((a, b) => a.due.compareTo(b.due));
+  for (final m in sorted) {
+    if (progress + 0.005 < m.fraction) return (milestone: m, late: now.isAfter(m.due));
+  }
+  return null;
+}
+
+/// "❤️ 2  😂 1": a note's reactions, most given first.
+String reactionSummary(Map<String, String> byMember) {
+  final counts = <String, int>{};
+  for (final e in byMember.values) {
+    counts[e] = (counts[e] ?? 0) + 1;
+  }
+  final sorted = counts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+  return [for (final e in sorted) '${e.key} ${e.value}'].join('  ');
 }
 
 class ClubComment {
@@ -218,10 +271,62 @@ class ClubService {
         .map((q) => [for (final d in q.docs) Club.fromMap(d.id, d.data())]);
   }
 
-  Stream<List<({String uid, String name})>> members(String code) => _club(code)
+  Stream<List<ClubMember>> members(String code) => _club(code)
       .collection('members')
       .snapshots()
-      .map((q) => [for (final d in q.docs) (uid: d.id, name: d.data()['name'] as String? ?? 'A reader')]);
+      .map(
+        (q) => [
+          for (final d in q.docs)
+            ClubMember(
+              uid: d.id,
+              name: d.data()['name'] as String? ?? 'A reader',
+              progress: (d.data()['progress'] as num?)?.toDouble(),
+            ),
+        ],
+      );
+
+  /// The club's reading schedule, soonest first, as it changes.
+  Stream<List<ClubMilestone>> schedule(String code) => _club(code).snapshots().map((doc) {
+    final list = (doc.data()?['schedule'] as List?) ?? const [];
+    return [
+      for (final m in list)
+        if (m is Map) ClubMilestone.fromMap(m.cast<String, dynamic>()),
+    ]..sort((a, b) => a.due.compareTo(b.due));
+  });
+
+  /// Replaces the schedule (the club's owner only).
+  Future<void> setSchedule(String code, List<ClubMilestone> schedule) async {
+    _user;
+    await _club(code).update({'schedule': [for (final m in schedule) m.toMap()]});
+  }
+
+  /// Tells the club how far through the book this reader is.
+  Future<void> reportProgress(String code, double progress) async {
+    final user = _user;
+    await _club(code).collection('members').doc(user.uid).set({
+      'progress': progress.clamp(0.0, 1.0),
+      'progressAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  /// Each member's reaction to a note, by uid.
+  Stream<Map<String, String>> reactions(String code, String noteId) => _club(code)
+      .collection('notes')
+      .doc(noteId)
+      .collection('reactions')
+      .snapshots()
+      .map((q) => {for (final d in q.docs) d.id: d.data()['emoji'] as String? ?? '❤️'});
+
+  /// Reacts to a note with [emoji], or takes this reader's reaction back (null).
+  Future<void> react(String code, String noteId, String? emoji) async {
+    final user = _user;
+    final doc = _club(code).collection('notes').doc(noteId).collection('reactions').doc(user.uid);
+    if (emoji == null) {
+      await doc.delete();
+    } else {
+      await doc.set({'emoji': emoji, 'name': _name, 'at': FieldValue.serverTimestamp()});
+    }
+  }
 
   Stream<List<ClubNote>> notes(String code) => _club(code)
       .collection('notes')

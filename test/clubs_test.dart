@@ -25,4 +25,22 @@ void main() {
     final colors = {for (var i = 0; i < 40; i++) memberColor('reader-$i')};
     expect(colors.length, greaterThan(4));
   });
+
+  test('the next milestone is the first not yet reached, late once its date has passed', () {
+    final schedule = [
+      ClubMilestone(label: 'Part two', fraction: 0.5, due: DateTime(2026, 11, 15)),
+      ClubMilestone(label: 'Chapter 5', fraction: 0.2, due: DateTime(2026, 11, 1)),
+    ];
+    final now = DateTime(2026, 11, 3);
+    expect(nextMilestone(schedule, 0.1, now)?.milestone.label, 'Chapter 5');
+    expect(nextMilestone(schedule, 0.1, now)?.late, isTrue);
+    expect(nextMilestone(schedule, 0.3, now)?.milestone.label, 'Part two');
+    expect(nextMilestone(schedule, 0.3, now)?.late, isFalse);
+    expect(nextMilestone(schedule, 0.5, now), isNull);
+  });
+
+  test('reactions add up, most given first', () {
+    expect(reactionSummary({'a': '😂', 'b': '❤️', 'c': '❤️'}), '❤️ 2  😂 1');
+    expect(reactionSummary(const {}), '');
+  });
 }

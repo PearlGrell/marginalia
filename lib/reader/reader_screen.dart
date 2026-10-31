@@ -114,6 +114,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   /// This sitting with the book, for stats and streaks.
   SessionRecorder? _session;
+
+  /// The clubs reading this book, told how far the reader got when the book closes.
+  List<Club> _clubs = const [];
+  late final ClubService _clubService;
   late final AppLifecycleListener _lifecycle;
 
   @override
@@ -123,6 +127,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _db = ref.read(databaseProvider);
     _listen = ref.read(listenProvider.notifier);
     _sync = ref.read(syncProvider.notifier);
+    _clubService = ref.read(clubServiceProvider);
+    ref.listenManual(clubsForBookProvider(widget.bookId), (_, next) => _clubs = next, fireImmediately: true);
     ref.read(annotationStoreProvider).migrateLegacyBookmarks(widget.bookId);
     ref.listenManual(
       annotationsProvider(widget.bookId),
@@ -284,6 +290,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   void dispose() {
     // Reading progress and notes go out shortly after closing the book.
     _sync.scheduleSoon();
+    final progress = _location?.totalProgression;
+    if (progress != null) {
+      for (final club in _clubs) {
+        unawaited(_clubService.reportProgress(club.code, progress).catchError((_) {}));
+      }
+    }
     // The book closes with the reader, so reading aloud stops too.
     if (_listen.isActive) _listen.stop();
     _lifecycle.dispose();

@@ -155,6 +155,15 @@ class _ClubScreenState extends ConsumerState<ClubScreen> {
   late final Future<Club> _club = ref.read(clubServiceProvider).find(widget.code);
   bool _joining = false;
 
+  /// This reader's progress, told to the club once when the screen opens.
+  bool _reported = false;
+
+  void _reportProgress(Club club, Book copy) {
+    if (_reported) return;
+    _reported = true;
+    ref.read(clubServiceProvider).reportProgress(club.code, copy.progress).catchError((_) {});
+  }
+
   Future<void> _join(Club club) async {
     setState(() => _joining = true);
     try {
@@ -203,6 +212,7 @@ class _ClubScreenState extends ConsumerState<ClubScreen> {
         final member = (ref.watch(myClubsProvider).value ?? const <Club>[]).any((c) => c.code == club.code);
         final me = ref.watch(clubServiceProvider).myUid;
         final copy = ref.watch(_bookProvider(club.bookId)).value;
+        if (member && copy != null) _reportProgress(club, copy);
         return Scaffold(
           appBar: AppBar(
             title: Text(club.name),
@@ -251,6 +261,8 @@ class _ClubScreenState extends ConsumerState<ClubScreen> {
                 ),
               if (member) ...[
                 const SizedBox(height: Space.xl),
+                _Schedule(club: club, owner: club.ownerUid == me, progress: copy?.progress),
+                const SizedBox(height: Space.xl),
                 _Members(code: club.code),
                 const SizedBox(height: Space.xl),
                 Text('Shared', style: text.titleMedium),
@@ -269,10 +281,15 @@ final _bookProvider = StreamProvider.family<Book?, String>(
   (ref, id) => ref.watch(databaseProvider).watchBook(id),
 );
 
-final _membersProvider = StreamProvider.family<List<({String uid, String name})>, String>(
+final _membersProvider = StreamProvider.family<List<ClubMember>, String>(
   (ref, code) => ref.watch(clubServiceProvider).members(code),
 );
 
+final _scheduleProvider = StreamProvider.family<List<ClubMilestone>, String>(
+  (ref, code) => ref.watch(clubServiceProvider).schedule(code),
+);
+
+/// Who's in the club, each with how far through the book they are, furthest first.
 class _Members extends ConsumerWidget {
   const _Members({required this.code});
 
@@ -280,16 +297,217 @@ class _Members extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final members = ref.watch(_membersProvider(code)).value ?? const [];
-    return Wrap(
-      spacing: Space.sm,
-      runSpacing: Space.sm,
+    final members = [...ref.watch(_membersProvider(code)).value ?? const <ClubMember>[]]
+      ..sort((a, b) => (b.progress ?? -1).compareTo(a.progress ?? -1));
+    final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Text('Members', style: text.titleMedium),
+        const SizedBox(height: Space.sm),
         for (final m in members)
-          Chip(
-            avatar: CircleAvatar(backgroundColor: memberColor(m.uid), child: Text(m.name.characters.first.toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 12))),
-            label: Text(m.name),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: Space.xs),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 14,
+                  backgroundColor: memberColor(m.uid),
+                  child: Text(
+                    m.name.isEmpty ? '?' : m.name.characters.first.toUpperCase(),
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ),
+                const SizedBox(width: Space.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(m.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: text.bodyMedium),
+                      const SizedBox(height: 4),
+                      LinearProgressIndicator(
+                        value: m.progress ?? 0,
+                        minHeight: 3,
+                        color: memberColor(m.uid),
+                        backgroundColor: scheme.outlineVariant,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: Space.md),
+                SizedBox(
+                  width: 40,
+                  child: Text(
+                    m.progress == null ? '–' : '${(m.progress! * 100).round()}%',
+                    textAlign: TextAlign.end,
+                    style: text.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ],
+            ),
           ),
+      ],
+    );
+  }
+}
+
+/// The club's reading schedule: milestones by date, which this reader has reached, and the
+/// next one. Its owner adds and removes them.
+class _Schedule extends ConsumerWidget {
+  const _Schedule({required this.club, required this.owner, required this.progress});
+
+  final Club club;
+  final bool owner;
+
+  /// This reader's progress through their copy, if they have it.
+  final double? progress;
+
+  Future<void> _add(BuildContext context, WidgetRef ref, List<ClubMilestone> schedule) async {
+    final added = await showDialog<ClubMilestone>(context: context, builder: (context) => const _MilestoneDialog());
+    if (added == null) return;
+    await _save(context, ref, [...schedule, added]);
+  }
+
+  Future<void> _save(BuildContext context, WidgetRef ref, List<ClubMilestone> schedule) async {
+    try {
+      await ref.read(clubServiceProvider).setSchedule(club.code, schedule);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ClubException ? e.message : 'The schedule couldn’t be saved.')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final schedule = ref.watch(_scheduleProvider(club.code)).value ?? const <ClubMilestone>[];
+    final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
+    final localizations = MaterialLocalizations.of(context);
+    final now = DateTime.now();
+    final next = progress == null ? null : nextMilestone(schedule, progress!, now);
+    if (schedule.isEmpty && !owner) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text('Schedule', style: text.titleMedium)),
+            if (owner)
+              TextButton.icon(
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Milestone'),
+                onPressed: () => _add(context, ref, schedule),
+              ),
+          ],
+        ),
+        if (schedule.isEmpty)
+          Text(
+            'Set where the club should be by when (“Up to chapter 10 by Sunday”), and everyone sees how they’re doing.',
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        if (next != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: Space.sm),
+            child: Text(
+              next.late
+                  ? 'Behind: “${next.milestone.label}” was due ${localizations.formatMediumDate(next.milestone.due)}.'
+                  : 'Next: “${next.milestone.label}” by ${localizations.formatMediumDate(next.milestone.due)}. '
+                        '${(((next.milestone.fraction - progress!) * 100).clamp(0, 100)).round()}% to go.',
+              style: text.bodyMedium?.copyWith(color: next.late ? scheme.error : scheme.primary),
+            ),
+          ),
+        for (final (i, m) in schedule.indexed)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            leading: Icon(
+              progress != null && progress! + 0.005 >= m.fraction ? Icons.check_circle : Icons.radio_button_unchecked,
+              color: progress != null && progress! + 0.005 >= m.fraction ? scheme.primary : scheme.outline,
+            ),
+            title: Text(m.label),
+            subtitle: Text('${localizations.formatMediumDate(m.due)} · ${(m.fraction * 100).round()}% through'),
+            trailing: owner
+                ? IconButton(
+                    tooltip: 'Remove',
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => _save(context, ref, [...schedule]..removeAt(i)),
+                  )
+                : null,
+          ),
+      ],
+    );
+  }
+}
+
+/// A new milestone: what it's called, how far through the book, and by when.
+class _MilestoneDialog extends StatefulWidget {
+  const _MilestoneDialog();
+
+  @override
+  State<_MilestoneDialog> createState() => _MilestoneDialogState();
+}
+
+class _MilestoneDialogState extends State<_MilestoneDialog> {
+  final _label = TextEditingController();
+  double _fraction = 0.25;
+  DateTime _due = DateTime.now().add(const Duration(days: 7));
+
+  @override
+  void dispose() {
+    _label.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final localizations = MaterialLocalizations.of(context);
+    final label = _label.text.trim();
+    return AlertDialog(
+      title: const Text('Add a milestone'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _label,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(labelText: 'Where to', hintText: 'Up to chapter 10'),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: Space.md),
+          Text('${(_fraction * 100).round()}% through the book'),
+          Slider(
+            value: _fraction,
+            divisions: 20,
+            onChanged: (v) => setState(() => _fraction = v),
+          ),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.event_outlined),
+            label: Text('By ${localizations.formatMediumDate(_due)}'),
+            onPressed: () async {
+              final now = DateTime.now();
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _due,
+                firstDate: DateTime(now.year, now.month, now.day),
+                lastDate: now.add(const Duration(days: 730)),
+              );
+              if (picked != null) setState(() => _due = DateTime(picked.year, picked.month, picked.day, 23, 59));
+            },
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: label.isEmpty || _fraction <= 0
+              ? null
+              : () => Navigator.pop(context, ClubMilestone(label: label, fraction: _fraction, due: _due)),
+          child: const Text('Add'),
+        ),
       ],
     );
   }
@@ -311,6 +529,63 @@ class _Notes extends ConsumerWidget {
       );
     }
     return Column(children: [for (final n in notes) _NoteCard(note: n)]);
+  }
+}
+
+final _reactionsProvider = StreamProvider.family<Map<String, String>, (String, String)>(
+  (ref, key) => ref.watch(clubServiceProvider).reactions(key.$1, key.$2),
+);
+
+class _Reactions extends ConsumerWidget {
+  const _Reactions({required this.note});
+
+  final ClubNote note;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final reactions = ref.watch(_reactionsProvider((note.club, note.id))).value ?? const <String, String>{};
+    if (reactions.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Text(reactionSummary(reactions), style: Theme.of(context).textTheme.labelMedium),
+    );
+  }
+}
+
+/// The reactions to pick from, this reader's own shown picked; tapping it again takes it back.
+class _ReactionPicker extends ConsumerWidget {
+  const _ReactionPicker({required this.note});
+
+  final ClubNote note;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final service = ref.watch(clubServiceProvider);
+    final reactions = ref.watch(_reactionsProvider((note.club, note.id))).value ?? const <String, String>{};
+    final mine = reactions[service.myUid];
+    return Wrap(
+      spacing: Space.xs,
+      runSpacing: Space.xs,
+      children: [
+        for (final emoji in clubReactions)
+          ChoiceChip(
+            showCheckmark: false,
+            label: Text([emoji, if (reactions.values.where((e) => e == emoji).length case final n when n > 0) '$n'].join(' ')),
+            selected: mine == emoji,
+            onSelected: (_) async {
+              try {
+                await service.react(note.club, note.id, mine == emoji ? null : emoji);
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(e is ClubException ? e.message : 'That reaction couldn’t be saved.')),
+                  );
+                }
+              }
+            },
+          ),
+      ],
+    );
   }
 }
 
@@ -343,6 +618,7 @@ class _NoteCard extends StatelessWidget {
                     [note.authorName, ?note.chapterTitle].join(' · '),
                     style: text.labelSmall?.copyWith(color: color),
                   ),
+                  _Reactions(note: note),
                 ],
               ),
             ),
@@ -425,6 +701,8 @@ class _ClubNoteSheetState extends ConsumerState<_ClubNoteSheet> {
               ),
             if (note.note case final n? when n.isNotEmpty)
               Padding(padding: const EdgeInsets.only(top: Space.md), child: Text(n, style: text.bodyLarge)),
+            const SizedBox(height: Space.md),
+            _ReactionPicker(note: note),
             const SizedBox(height: Space.lg),
             for (final c in comments)
               Padding(
