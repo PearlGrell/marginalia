@@ -141,6 +141,23 @@ void main() {
     expect(passages.last.text, contains('Celia guessed'));
   });
 
+  test('files marked kept with none of their text (a build that could not read it) are kept again', () async {
+    final dir = await Directory.systemTemp.createTemp('book');
+    final text = File('${dir.path}/text.jsonl')
+      ..writeAsStringSync('${jsonEncode({'c': 2, 'p': 0.4, 't': 'Alice was beginning to get very tired.'})}\n');
+    final summaries = File('${dir.path}/section-summaries.json')..writeAsStringSync(jsonEncode({'0': '', '1': 'Alice falls.'}));
+    final state = <String, Object?>{
+      'upTo': {'2': 0.4, '3': 1.0, '4': 0.6},
+      'complete': [3],
+    };
+    await repairKept(state, text, summaries);
+
+    expect(state['upTo'], {'2': 0.4});
+    expect(state['complete'], isEmpty);
+    expect(jsonDecode(summaries.readAsStringSync()), {'1': 'Alice falls.'});
+    await dir.delete(recursive: true);
+  });
+
   test('the book so far names chapters as the reader sees them, and stops at the page', () async {
     final dir = await Directory.systemTemp.createTemp('book');
     File('${dir.path}/state.json').writeAsStringSync(jsonEncode({

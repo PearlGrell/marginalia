@@ -265,7 +265,12 @@ class BookMemory {
   }
 
   Future<void> setChapters(List<StoryChapter> chapters) async {
-    await _saveState((await _state())..['chapters'] = [for (final c in chapters) c.toJson()]);
+    final state = await _state();
+    if (state['repaired'] != 1) {
+      await repairKept(state, await _file('text.jsonl'), await _file('section-summaries.json'));
+      state['repaired'] = 1;
+    }
+    await _saveState(state..['chapters'] = [for (final c in chapters) c.toJson()]);
     // Kept by an earlier version: whole chapters (the page-by-page text replaces them), and
     // summaries of whole files (now they're of chapters).
     await for (final f in (await _dir()).list()) {
@@ -297,6 +302,10 @@ class BookMemory {
       afterProgression: from,
       toProgression: progression,
     );
+    // Nothing read out of a file none of whose text is kept yet: not kept. (Its page may just
+    // not start a paragraph, or the book's text couldn't be read: an older release build lost
+    // Readium's content service, and marking the file kept then left it empty for good.)
+    if (paragraphs.isEmpty && from < 0) return (finished: false, kept: const <String>[]);
     await _append(paragraphs);
     final reached = paragraphs.isEmpty ? progression : paragraphs.last.progression;
     upTo['$chapter'] = progression >= 1 ? 1.0 : (reached > from ? reached : from);
@@ -344,6 +353,36 @@ class BookMemory {
   Future<BookData> load({required Place place, required String title, String? authors}) async {
     final dir = (await _dir()).path;
     return Isolate.run(() => buildBookData(dir, place, title, authors));
+  }
+}
+
+/// Forgets, in [state], that files were kept when none of their text is in [text] (a book read
+/// with a release build that couldn't read its text), so they're kept again; and the empty
+/// summaries in [summaries] written of them (public for tests).
+Future<void> repairKept(Map<String, Object?> state, File text, File summaries) async {
+  final withText = <int>{};
+  if (await text.exists()) {
+    await for (final line in text.openRead().transform(utf8.decoder).transform(const LineSplitter())) {
+      if (RegExp(r'^\{"c":(\d+)').firstMatch(line) case final m?) withText.add(int.parse(m[1]!));
+    }
+  }
+  final upTo = ((state['upTo'] as Map?) ?? const {}).cast<String, Object?>();
+  final complete = [for (final c in (state['complete'] as List?) ?? const []) c as int];
+  state
+    ..['upTo'] = {
+      for (final e in upTo.entries)
+        if (withText.contains(int.tryParse(e.key))) e.key: e.value,
+    }
+    ..['complete'] = [for (final c in complete) if (withText.contains(c)) c];
+  // A summary of nothing ('') may be of a chapter whose text is only now to be kept.
+  if (await summaries.exists()) {
+    try {
+      final all = (jsonDecode(await summaries.readAsString()) as Map).cast<String, Object?>()
+        ..removeWhere((_, v) => v == '');
+      await summaries.writeAsString(jsonEncode(all));
+    } on FormatException {
+      await summaries.delete();
+    }
   }
 }
 
