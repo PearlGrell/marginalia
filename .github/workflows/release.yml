@@ -1,0 +1,94 @@
+# Builds the release APK (arm64, like scripts/deploy-to-phone.ps1 -Mode release) and
+# publishes it as a GitHub Release: on every push to main, or by hand from any branch
+# (a prerelease, then).
+#
+# Secrets:
+# - MARGINALIA_KEYSTORE_BASE64, MARGINALIA_KEYSTORE_PASSWORD, MARGINALIA_KEY_ALIAS,
+#   MARGINALIA_KEY_PASSWORD: the signing key. Builds signed with another key won't install
+#   over the app already on a phone, and Google sign-in only accepts registered keys.
+# - CLOUD_JSON: cloud.json, the Firebase project for sync (optional).
+name: Release APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.2"
+          channel: stable
+          cache: true
+
+      - name: Signing key and cloud settings
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MARGINALIA_KEYSTORE_BASE64 }}
+          CLOUD_JSON: ${{ secrets.CLOUD_JSON }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/marginalia.keystore"
+            echo "MARGINALIA_KEYSTORE=$RUNNER_TEMP/marginalia.keystore" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No signing key: the APK is signed with a throwaway debug key and won't install over an existing Marginalia."
+          fi
+          if [ -n "$CLOUD_JSON" ]; then
+            printf '%s' "$CLOUD_JSON" > "$RUNNER_TEMP/cloud.json"
+            echo "CLOUD_CONFIG=$RUNNER_TEMP/cloud.json" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build
+        env:
+          MARGINALIA_KEYSTORE_PASSWORD: ${{ secrets.MARGINALIA_KEYSTORE_PASSWORD }}
+          MARGINALIA_KEY_ALIAS: ${{ secrets.MARGINALIA_KEY_ALIAS }}
+          MARGINALIA_KEY_PASSWORD: ${{ secrets.MARGINALIA_KEY_PASSWORD }}
+        run: |
+          # Minutes since 2026, as the deploy script does, so each build installs as an update.
+          build_number=$(( ($(date -u +%s) - $(date -u -d 2026-01-01 +%s)) / 60 ))
+          stamp=$(date -u +%Y%m%d-%H%M)
+          args=(build apk --release --build-number="$build_number" --dart-define=BUILD_STAMP="$stamp" --target-platform android-arm64)
+          if [ -n "${CLOUD_CONFIG:-}" ]; then args+=(--dart-define-from-file="$CLOUD_CONFIG"); fi
+          flutter pub get
+          flutter "${args[@]}"
+          version=$(grep -m1 '^version:' pubspec.yaml | sed -E 's/version: *([^+]*).*/\1/')
+          apk="marginalia-$version-$build_number.apk"
+          mv build/app/outputs/flutter-apk/app-release.apk "$apk"
+          echo "APK=$apk" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APK }}
+          path: ${{ env.APK }}
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then prerelease=(--prerelease); fi
+          gh release create "v$VERSION-build.$BUILD_NUMBER" "$APK" \
+            --target "$GITHUB_SHA" \
+            --title "Marginalia $VERSION (build $BUILD_NUMBER)" \
+            --notes "Built from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}." \
+            "${prerelease[@]}"
