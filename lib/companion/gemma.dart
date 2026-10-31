@@ -120,6 +120,9 @@ class GemmaPack extends Notifier<GemmaState> {
     return const GemmaState();
   }
 
+  /// The model on the phone, if one is.
+  GemmaSize? get installedSize => state.size;
+
   static Future<File> _file(GemmaSize size) async =>
       File('${(await getApplicationSupportDirectory()).path}/models/${size.file}');
 
@@ -380,10 +383,10 @@ class GemmaModel implements CompanionModel {
   // phone), 350 for a follow-up, in a window of 2048 with the answers and conversation so far.
   // The larger model reads more in a window twice the size.
   @override
-  int get freshChars => (pack.state.size ?? GemmaSize.small).freshChars;
+  int get freshChars => (pack.installedSize ?? GemmaSize.small).freshChars;
 
   @override
-  int get followUpChars => (pack.state.size ?? GemmaSize.small).followUpChars;
+  int get followUpChars => (pack.installedSize ?? GemmaSize.small).followUpChars;
 
   @override
   Stream<String> write(String prompt, {required bool fresh, required int maxTokens}) =>

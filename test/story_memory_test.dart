@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:marginalia/companion/book_memory.dart';
+import 'package:marginalia/companion/explain.dart';
 import 'package:marginalia/companion/story_memory.dart';
 
 void main() {
@@ -71,5 +72,18 @@ void main() {
     });
     expect((await readStories(dir.path))[4]!.people['Emma'], 'Clever.');
     await dir.delete(recursive: true);
+  });
+
+  test('explaining a passage gives the model what’s around it and the story so far, and no more', () {
+    final prompt = explainPrompt(
+      title: 'Pride and Prejudice',
+      selected: 'entailed',
+      paragraph: 'Mr. Bennet’s property was entailed, in default of heirs male, on a distant relation.',
+      story: 'The Bennets have five daughters and no son.',
+    );
+    expect(prompt, contains('"entailed"'));
+    expect(prompt, contains('in default of heirs male'));
+    expect(prompt, contains('five daughters'));
+    expect(prompt, contains('Never mention or hint at anything that happens later'));
   });
 }

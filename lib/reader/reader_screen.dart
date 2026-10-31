@@ -13,6 +13,7 @@ import '../clubs/club_screens.dart';
 import '../clubs/clubs.dart';
 import '../companion/book_memory.dart';
 import '../companion/companion_sheet.dart';
+import '../companion/explain.dart';
 import '../companion/previously.dart';
 import '../data/database.dart';
 import '../data/library.dart';
@@ -475,6 +476,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       case 'who':
         final name = selection.text?.trim() ?? '';
         if (name.isNotEmpty && mounted) await _ask(name: name);
+      case 'explain':
+        final text = selection.text?.trim() ?? '';
+        if (text.isNotEmpty && mounted) await _explain(selection);
       case 'define':
         final word = selection.text?.trim() ?? '';
         if (word.isNotEmpty && mounted) {
@@ -749,6 +753,32 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     } catch (_) {
       // Nothing kept yet to remind them of.
     }
+  }
+
+  /// What a selected passage means, from the phone's model, with the story so far (never past
+  /// this page) for context.
+  Future<void> _explain(ReaderSelection selection) async {
+    final keeper = _keeper;
+    final location = _location;
+    final place = location == null ? null : keeper?.placeOf(location);
+    String? story;
+    if (keeper != null && place != null) {
+      try {
+        story = (await keeper.memory.load(place: place, title: keeper.title, authors: keeper.authors)).story?.story;
+      } catch (_) {
+        // Explained without it.
+      }
+    }
+    if (!mounted) return;
+    final selected = selection.text!.trim();
+    await showExplainSheet(
+      context,
+      selected: selected,
+      paragraph: selection.paragraphText ?? [selection.before, selected, selection.after].whereType<String>().join(' '),
+      title: _book?.title ?? _publication?.title ?? '',
+      authors: _book?.authors.join(', '),
+      story: story,
+    );
   }
 
   /// Who someone is, or a recap: from the book up to this page.

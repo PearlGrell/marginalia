@@ -5,7 +5,8 @@ import android.view.Menu
 import android.view.MenuItem
 
 /**
- * The menu shown over selected text: Highlight, Note, Share, Define, Translate and Copy. Picking one hands the
+ * The menu shown over selected text: Highlight, Note, Share, Define, Who's this?, Explain,
+ * Translate and Copy. Picking one hands the
  * action to [onAction] (which reads the selection from the navigator) and closes the menu.
  * [onActiveChanged] reports when a selection starts and ends, so Flutter can hand every
  * touch to the page while handles are being dragged.
@@ -21,6 +22,7 @@ class SelectionMenu(
         "share" to "Share",
         "define" to "Define",
         "who" to "Who's this?",
+        "explain" to "Explain",
         "translate" to "Translate",
         "copy" to "Copy",
     )

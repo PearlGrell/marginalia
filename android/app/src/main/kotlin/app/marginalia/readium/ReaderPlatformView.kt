@@ -441,8 +441,8 @@ class ReaderPlatformView(
         scope.launch {
             val selection = navigator.currentSelection() ?: return@launch
             // For translating: mark the paragraph around the selection, so a translation can
-            // be put right after it.
-            val paragraph = if (action == "translate") {
+            // be put right after it. For explaining: the paragraph, for what's around it.
+            val paragraph = if (action == "translate" || action == "explain") {
                 navigator.evaluateJavascript(PARAGRAPH_SCRIPT)?.let {
                     runCatching { JSONObject(JSONObject("{\"v\":$it}").getString("v")) }.getOrNull()
                 }
