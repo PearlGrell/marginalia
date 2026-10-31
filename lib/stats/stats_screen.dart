@@ -11,6 +11,7 @@ import '../theme/tokens.dart';
 import 'reading_goals.dart';
 import 'reading_stats.dart';
 import 'recap_card.dart';
+import 'year_review.dart';
 
 final sessionsProvider = StreamProvider<List<ReadingSession>>((ref) => ref.watch(databaseProvider).watchSessions());
 
@@ -180,6 +181,17 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
               onPressed: stats.seconds == 0 && stats.finished.isEmpty ? null : () => showRecapSheet(context, stats, books),
             ),
           ),
+          if (_range == _Range.year) ...[
+            const SizedBox(height: Space.sm),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Space.gutter),
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.celebration_outlined),
+                label: Text('Your ${now.year} in review'),
+                onPressed: () => showYearReviewSheet(context, year: now.year, sessions: sessions),
+              ),
+            ),
+          ],
         ],
       ),
     );
