@@ -500,6 +500,12 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
   );
 
   List<Widget> _recapTab(BookData data, TextTheme text, ColorScheme scheme) => [
+    if (data.story?.story case final story? when story.trim().isNotEmpty) ...[
+      Text('The story so far', style: text.titleSmall),
+      const SizedBox(height: Space.xs),
+      _prose(story, text),
+      const SizedBox(height: Space.sm),
+    ],
     ..._chapters(data, text, scheme),
     ..._answer(_recap, text, scheme, empty: 'There’s not enough read yet for a recap.'),
     if (_questions.isNotEmpty) ...[
@@ -531,6 +537,11 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (data.book.profileOf(name) case final profile?) ...[
+                  Text('So far', style: text.labelSmall?.copyWith(color: muted)),
+                  _prose(profile, text),
+                  const SizedBox(height: Space.sm),
+                ],
                 if (people.where((p) => p.name == name).firstOrNull case final person?)
                   _passage(
                     person.firstSentence,

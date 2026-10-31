@@ -97,6 +97,8 @@ class BookSoFar {
     required this.title,
     this.authors,
     required List<Paragraph> paragraphs,
+    this.story,
+    this.profiles = const {},
     this.summaries = const {},
     this.titles = const {},
     this.chapterNow,
@@ -105,6 +107,26 @@ class BookSoFar {
 
   final String title;
   final String? authors;
+
+  /// The story up to the chapter the reader is in, as the companion remembers it (see
+  /// `story_memory.dart`); null until a chapter has been finished with a model.
+  final String? story;
+
+  /// Who the main people are, as of the same chapter, by name.
+  final Map<String, String> profiles;
+
+  /// What's remembered of [name], if anything (whatever its case; "Darcy" for "Mr. Darcy").
+  String? profileOf(String name) {
+    final wanted = name.trim().toLowerCase();
+    for (final MapEntry(:key, :value) in profiles.entries) {
+      if (key.toLowerCase() == wanted) return value;
+    }
+    for (final MapEntry(:key, :value) in profiles.entries) {
+      final k = key.toLowerCase();
+      if (k.split(' ').contains(wanted) || wanted.split(' ').contains(k)) return value;
+    }
+    return null;
+  }
 
   /// Summaries of the chapters finished, by chapter number - 1 ('' for nothing to tell).
   final Map<int, String> summaries;
@@ -346,15 +368,20 @@ class Conversation {
       for (final t in turns)
         if (t.ask != ask && t.answer.isNotEmpty) 'They asked: ${t.ask.text}\nYou said: ${_brief(t.answer)}',
     ];
+    final story = this.book.story?.trim();
+    final profile = ask.kind == AskKind.who ? this.book.profileOf(ask.name!) : null;
     if (fresh) {
       return [
         this.book.instructions,
+        if (story != null && story.isNotEmpty) 'The story before this chapter, in brief:\n$story',
+        if (profile != null) 'What we knew of ${ask.name} before this chapter: $profile',
         if (book.isNotEmpty) 'From the book, up to the reader\'s page (chapter number in brackets):\n$book',
         if (earlier.isNotEmpty) 'Earlier in this conversation:\n${earlier.skip(math.max(0, earlier.length - 2)).join('\n')}',
         'The reader asks: ${ask.text}\n$guide',
       ].join('\n\n');
     }
     return [
+      if (profile != null) 'What we knew of ${ask.name} before this chapter: $profile',
       if (book.isNotEmpty) 'More from the book (chapter number in brackets):\n$book',
       'The reader asks: ${ask.text}\n$guide',
     ].join('\n\n');

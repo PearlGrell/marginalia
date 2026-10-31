@@ -11,7 +11,11 @@ import 'people.dart';
   final current = data.current;
   final before = [for (final c in data.chapters) if (c.key != current?.key) c];
   final parts = <String>[];
-  if (before.lastOrNull case final last?) {
+  final story = data.story?.story.trim();
+  if (story != null && story.isNotEmpty) {
+    // The whole story so far, as the companion remembers it.
+    parts.add(_clip(story, max: 420));
+  } else if (before.lastOrNull case final last?) {
     final summary = data.book.summaries[last.number - 1];
     final told = summary != null && summary.trim().isNotEmpty
         ? summary.trim()

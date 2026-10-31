@@ -12,6 +12,7 @@ import 'companion.dart';
 import 'conversation.dart';
 import 'gemma.dart';
 import 'people.dart';
+import 'story_memory.dart';
 
 /// A section of the book, from its contents: a story chapter, or front or back matter (kept
 /// out of the story). A section can start part-way into one of the book's files (many books
@@ -242,6 +243,9 @@ class BookMemory {
 
   Future<File> _file(String name) async => File('${(await _dir()).path}/$name');
 
+  /// Where the book's memory is kept on the phone.
+  Future<String> path() async => (await _dir()).path;
+
   Future<Map<String, Object?>> _state() async {
     final file = await _file('state.json');
     if (!await file.exists()) return {};
@@ -419,6 +423,7 @@ Set<int> finishedChapters(List<StoryChapter> sections, List<int> placed, Set<int
 class BookData {
   const BookData({
     required this.book,
+    this.story,
     required this.people,
     required this.chapters,
     required this.current,
@@ -426,6 +431,9 @@ class BookData {
   });
 
   final BookSoFar book;
+
+  /// The story so far and who's who, as of the last chapter finished before the reader's.
+  final StorySnapshot? story;
   final List<Person> people;
 
   /// The story chapters up to the reader's, with their numbers and titles.
@@ -474,9 +482,13 @@ Future<BookData> buildBookData(String dir, Place place, String title, String? au
       if (placed[i] >= 0 && sections[placed[i]].isStory) (chapter: sections[placed[i]].number - 1, text: p.text),
   ];
   final upTo = [for (final (i, c) in sections.indexed) if (c.isStory && i <= here) c];
+  // What the companion remembers as of the last chapter finished before this one.
+  final snapshot = storyBefore(await readStories(dir), [for (final c in upTo) if (c != current) c]);
   final book = BookSoFar(
     title: title,
     authors: authors,
+    story: snapshot?.story,
+    profiles: snapshot?.people ?? const {},
     paragraphs: paragraphs,
     summaries: {
       for (final c in upTo)
@@ -488,6 +500,7 @@ Future<BookData> buildBookData(String dir, Place place, String title, String? au
   );
   return BookData(
     book: book,
+    story: snapshot,
     people: peopleIn(book.index),
     chapters: upTo,
     current: current,
@@ -666,6 +679,23 @@ class ChapterSummaries extends Notifier<int> {
       await memory.keepSummary(chapter.key, tidyAnswer(summary));
       state++;
     }
+    // Then the story so far and who's who, carried on through each finished chapter.
+    await catchUpStories(
+      dir: await memory.path(),
+      title: title,
+      authors: authors,
+      sections: sections,
+      paragraphs: paragraphs,
+      placed: placed,
+      finished: finished,
+      summaries: await memory.summaries(),
+      generate: (prompt, maxTokens) async {
+        if (nano) return const Nano().generate(prompt);
+        await gemma.idle();
+        return gemma.once(prompt, maxTokens: maxTokens);
+      },
+      onWritten: () => state++,
+    );
     if (!nano) await gemma.releaseIfIdle();
   }
 
