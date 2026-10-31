@@ -11,6 +11,7 @@ import 'companion.dart';
 import 'conversation.dart';
 import 'gemma.dart';
 import 'people.dart';
+import 'previously.dart';
 
 /// The book so far, X-Ray style, never past [place]: a recap (each finished chapter's summary,
 /// then what has happened in the chapter the reader is in) with questions to follow it up, and
@@ -65,7 +66,7 @@ Future<bool> confirmGemmaDownload(BuildContext context) async =>
     ) ??
     false;
 
-enum _Tab { recap, people }
+enum _Tab { recap, people, timeline }
 
 class _CompanionSheet extends ConsumerStatefulWidget {
   const _CompanionSheet({
@@ -336,8 +337,9 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
         SegmentedButton<_Tab>(
           showSelectedIcon: false,
           segments: const [
-            ButtonSegment(value: _Tab.recap, label: Text('Recap so far'), icon: Icon(Icons.history_edu_outlined)),
-            ButtonSegment(value: _Tab.people, label: Text('People & places'), icon: Icon(Icons.groups_outlined)),
+            ButtonSegment(value: _Tab.recap, label: Text('Recap'), icon: Icon(Icons.history_edu_outlined)),
+            ButtonSegment(value: _Tab.people, label: Text('People'), icon: Icon(Icons.groups_outlined)),
+            ButtonSegment(value: _Tab.timeline, label: Text('Timeline'), icon: Icon(Icons.timeline)),
           ],
           selected: {_tab},
           onSelectionChanged: (s) => setState(() => _tab = s.first),
@@ -347,8 +349,10 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
           _working('Reading up to your page…', text, muted)
         else if (_tab == _Tab.recap)
           ..._recapTab(data, text, scheme)
+        else if (_tab == _Tab.people)
+          ..._peopleTab(data, text, scheme)
         else
-          ..._peopleTab(data, text, scheme),
+          ..._timelineTab(data, text, scheme),
         ..._modelCards(gemma, text: text, scheme: scheme),
       ],
     );
@@ -538,6 +542,69 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
           ),
         const Divider(height: 1),
       ],
+    ];
+  }
+
+  /// Chapter by chapter up to the reader's: who's in each, who first comes in, and what
+  /// happens (its summary, when there is one).
+  List<Widget> _timelineTab(BookData data, TextTheme text, ColorScheme scheme) {
+    final muted = scheme.onSurfaceVariant;
+    if (data.chapters.isEmpty) {
+      return [Text('Nothing kept of the book yet.', style: text.bodyMedium?.copyWith(color: muted))];
+    }
+    final now = data.current?.number;
+    final withText = data.book.chapters.toSet();
+    return [
+      for (final c in data.chapters)
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: 24,
+                child: Column(
+                  children: [
+                    const SizedBox(height: 6),
+                    Icon(
+                      c.number == now ? Icons.radio_button_checked : Icons.circle,
+                      size: c.number == now ? 14 : 8,
+                      color: c.number == now ? scheme.primary : scheme.outline,
+                    ),
+                    if (c.number != now) Expanded(child: VerticalDivider(width: 2, thickness: 2, color: scheme.outlineVariant)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: Space.sm),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: Space.lg),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        c.number == now ? 'Now · ${_chapterLabel(c.number)}' : _chapterLabel(c.number),
+                        style: text.titleSmall?.copyWith(color: c.number == now ? scheme.primary : null),
+                      ),
+                      if (!withText.contains(c.number))
+                        Text('Catching up on this chapter…', style: text.bodySmall?.copyWith(color: muted))
+                      else ...[
+                        if (chapterCast(data.people, c.number) case final cast when cast.isNotEmpty)
+                          Text('With ${cast.join(', ')}', style: text.bodyMedium),
+                        if (firstAppearances(data.people, c.number) case final first when first.isNotEmpty)
+                          Text('First appearance: ${first.join(', ')}', style: text.bodySmall?.copyWith(color: muted)),
+                        if (_summaries[c.number] case final summary? when summary.isNotEmpty && c.number != now)
+                          Padding(
+                            padding: const EdgeInsets.only(top: Space.xs),
+                            child: Text(summary, style: text.bodySmall?.copyWith(fontFamily: FontFamilies.reading)),
+                          ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
     ];
   }
 

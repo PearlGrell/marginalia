@@ -13,6 +13,7 @@ import '../clubs/club_screens.dart';
 import '../clubs/clubs.dart';
 import '../companion/book_memory.dart';
 import '../companion/companion_sheet.dart';
+import '../companion/previously.dart';
 import '../data/database.dart';
 import '../data/library.dart';
 import '../readium/readium.dart';
@@ -115,6 +116,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   /// This sitting with the book, for stats and streaks.
   SessionRecorder? _session;
 
+  /// Back after a while away: a reminder of the story so far, once the page is known.
+  bool _offerPreviously = false;
+  ({String heading, String text})? _previously;
+  int? _previouslyAt;
+
   /// The clubs reading this book, told how far the reader got when the book closes.
   List<Club> _clubs = const [];
   late final ClubService _clubService;
@@ -204,6 +210,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       return;
     }
     _initialLocator = widget.at ?? book.lastLocator;
+    // Away from a book they've started for most of a day: remind them where the story is.
+    final away = book.lastReadAt ?? book.lastOpenedAt;
+    _offerPreviously = widget.at == null &&
+        book.progress > 0.01 &&
+        away != null &&
+        DateTime.now().difference(away) > const Duration(hours: 8);
     await _db.updateBook(
       book.id,
       BooksCompanion(
@@ -338,6 +350,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
     _learnPace(location.position);
     _keeper?.reached(location);
+    if (_offerPreviously && _keeper != null) {
+      _offerPreviously = false;
+      unawaited(_showPreviously(location));
+    } else if (_previously != null && (location.position == null || (location.position! - (_previouslyAt ?? 0)).abs() >= 2)) {
+      // Reading on: the reminder has done its job.
+      _previously = null;
+    }
     setState(() => _location = location);
     _db.updateBook(
       widget.bookId,
@@ -714,6 +733,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _pageTurner.currentState?.tapAt(point.dx, y: point.dy);
   }
 
+  /// The reminder of the story so far, from what the companion kept, never past [location].
+  Future<void> _showPreviously(ReaderLocation location) async {
+    final keeper = _keeper;
+    final place = keeper?.placeOf(location);
+    if (keeper == null || place == null) return;
+    try {
+      final data = await keeper.memory.load(place: place, title: _book?.title ?? keeper.title, authors: keeper.authors);
+      final previously = previouslyOn(data);
+      if (!mounted || previously == null) return;
+      setState(() {
+        _previously = previously;
+        _previouslyAt = location.position;
+      });
+    } catch (_) {
+      // Nothing kept yet to remind them of.
+    }
+  }
+
   /// Who someone is, or a recap: from the book up to this page.
   Future<void> _ask({String? name}) async {
     final publication = _publication;
@@ -808,6 +845,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                   ],
                 ),
                 if (_search.index != null && !_chromeVisible) _buildSearchBar(theme),
+                if (_previously case final previously? when !_chromeVisible && !_selecting)
+                  Positioned(
+                    left: Space.gutter,
+                    right: Space.gutter,
+                    bottom: MediaQuery.viewPaddingOf(context).bottom + 40,
+                    child: PreviouslyCard(
+                      heading: previously.heading,
+                      text: previously.text,
+                      page: theme.page,
+                      ink: theme.ink,
+                      muted: theme.muted,
+                      onClose: () => setState(() => _previously = null),
+                      onMore: () {
+                        setState(() => _previously = null);
+                        _ask();
+                      },
+                    ),
+                  ),
                 _buildTopBar(theme),
                 _buildBottomPanel(theme),
               ],
