@@ -143,8 +143,12 @@ class ListenChannel(
         preferences = AndroidTtsPreferences(speed = call.argument<Double>("speed") ?: 1.0)
 
         scope.launch {
-            val factory = TtsNavigatorFactory(activity.application, publication, AndroidTtsEngineProvider(activity.application))
-                ?: return@launch result.error("unsupported", "This book has no text to read aloud.", null)
+            val factory = TtsNavigatorFactory(
+                activity.application,
+                publication,
+                SpokenTextEngineProvider(AndroidTtsEngineProvider(activity.application)),
+                tokenizerFactory = ::sentenceTokenizer,
+            ) ?: return@launch result.error("unsupported", "This book has no text to read aloud.", null)
             // From the page; failing that, the top of its chapter; failing that, the start of
             // the book (a page with nothing readable from there on, or a place Readium can't
             // start at).
