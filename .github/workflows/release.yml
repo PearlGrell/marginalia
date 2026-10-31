@@ -79,7 +79,7 @@ jobs:
       # After the build, which writes android/gradlew; a failure stops the release.
       - name: Unit tests
         working-directory: android
-        run: ./gradlew :app:testReleaseUnitTest --console=plain
+        run: ./gradlew :app:testDebugUnitTest --console=plain
 
       - uses: actions/upload-artifact@v4
         with:
