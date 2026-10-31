@@ -34,6 +34,10 @@ import org.readium.r2.shared.publication.services.cover
  *   returns its metadata (see [BookImporter])
  * - `pickCover {bookId}` → lets the reader pick an image and saves it as the book's cover:
  *   `{coverPath, coverColor}`, or null if nothing was picked
+ * - `scanFolder {uri, opf: true}` → the same, each with `opf`: the text of the
+ *   `metadata.opf` beside it, if any (a Calibre library keeps one in each book's folder)
+ * - `pickTextFile` → the text of a file the reader picks (a Kindle's My Clippings.txt), or
+ *   null if nothing was picked
  * - `takeOpenedFile` → `{uri, name}` of a book another app asked to open, once, or null.
  *   Dart is told with `onFileOpened` when one arrives.
  */
@@ -71,6 +75,7 @@ class LibraryChannel(
                 openedFile = null
             }
             "pickFolder" -> pickFolder(result)
+            "pickTextFile" -> pickTextFile(result)
             "pickCover" -> {
                 val bookId = call.argument<String>("bookId")
                     ?: return result.error("bad_args", "bookId is required", null)
@@ -79,9 +84,10 @@ class LibraryChannel(
             "scanFolder" -> {
                 val uri = call.argument<String>("uri")
                     ?: return result.error("bad_args", "uri is required", null)
+                val opf = call.argument<Boolean>("opf") == true
                 scope.launch {
                     try {
-                        result.success(withContext(Dispatchers.IO) { scanFolder(Uri.parse(uri)) })
+                        result.success(withContext(Dispatchers.IO) { scanFolder(Uri.parse(uri), opf) })
                     } catch (e: Exception) {
                         result.error("scan_failed", e.message, null)
                     }
@@ -116,6 +122,33 @@ class LibraryChannel(
         }
         // Many file managers label books as generic binaries; the import checks each file.
         launcher.launch(BOOK_TYPES)
+    }
+
+    private fun pickTextFile(result: MethodChannel.Result) {
+        val key = "marginalia-pick-text-${requestCount.incrementAndGet()}"
+        lateinit var launcher: androidx.activity.result.ActivityResultLauncher<Array<String>>
+        launcher = activity.activityResultRegistry.register(
+            key,
+            ActivityResultContracts.OpenDocument(),
+        ) { uri ->
+            launcher.unregister()
+            if (uri == null) return@register result.success(null)
+            scope.launch {
+                try {
+                    val text = withContext(Dispatchers.IO) {
+                        activity.contentResolver.openInputStream(uri)?.use { input ->
+                            // Clippings files grow for years, but not past this.
+                            String(input.readNBytesCompat(MAX_TEXT_BYTES), Charsets.UTF_8)
+                        }
+                    }
+                    result.success(text)
+                } catch (e: Exception) {
+                    result.error("read_failed", e.message, null)
+                }
+            }
+        }
+        // A Kindle's file can be labelled anything by the file manager it comes through.
+        launcher.launch(arrayOf("text/plain", "text/*", "application/octet-stream"))
     }
 
     private fun pickFolder(result: MethodChannel.Result) {
@@ -158,8 +191,11 @@ class LibraryChannel(
         launcher.launch("image/*")
     }
 
-    /** Every EPUB under the tree, depth first. */
-    private fun scanFolder(tree: Uri): List<Map<String, Any?>> {
+    /**
+     * Every book under the tree, depth first; with [opf], each with the text of the
+     * `metadata.opf` in its folder (Calibre's), if there is one.
+     */
+    private fun scanFolder(tree: Uri, opf: Boolean = false): List<Map<String, Any?>> {
         val resolver = activity.contentResolver
         val found = mutableListOf<Map<String, Any?>>()
         val pending = ArrayDeque<String>().apply { add(DocumentsContract.getTreeDocumentId(tree)) }
@@ -173,6 +209,8 @@ class LibraryChannel(
         while (pending.isNotEmpty()) {
             val parent = pending.removeFirst()
             val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parent)
+            val here = mutableListOf<Map<String, Any?>>()
+            var opfId: String? = null
             resolver.query(children, columns, null, null, null)?.use { cursor ->
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(0)
@@ -180,8 +218,9 @@ class LibraryChannel(
                     val mime = cursor.getString(2)
                     when {
                         mime == DocumentsContract.Document.MIME_TYPE_DIR -> pending.add(id)
+                        name.equals("metadata.opf", ignoreCase = true) -> opfId = id
                         mime in BOOK_TYPES.dropLast(1) || BOOK_EXTENSIONS.any { name.endsWith(it, ignoreCase = true) } ->
-                            found += mapOf(
+                            here += mapOf(
                                 "uri" to DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(),
                                 "name" to name,
                                 "size" to if (cursor.isNull(3)) null else cursor.getLong(3),
@@ -190,6 +229,14 @@ class LibraryChannel(
                     }
                 }
             }
+            val metadata = opfId?.takeIf { opf && here.isNotEmpty() }?.let { id ->
+                runCatching {
+                    resolver.openInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, id))?.use {
+                        String(it.readNBytesCompat(MAX_TEXT_BYTES), Charsets.UTF_8)
+                    }
+                }.getOrNull()
+            }
+            found += if (metadata == null) here else here.map { it + ("opf" to metadata) }
         }
         return found
     }
@@ -209,6 +256,21 @@ private val BOOK_TYPES = arrayOf(
     "application/octet-stream",
 )
 private val BOOK_EXTENSIONS = listOf(".epub", ".pdf", ".cbz")
+
+/** The most of a text file read in (a clippings file, a metadata.opf). */
+private const val MAX_TEXT_BYTES = 32 * 1024 * 1024
+
+/** Up to [limit] bytes of the stream ([java.io.InputStream.readNBytes] needs Android 13). */
+private fun java.io.InputStream.readNBytesCompat(limit: Int): ByteArray {
+    val out = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(64 * 1024)
+    while (out.size() < limit) {
+        val read = read(buffer, 0, minOf(buffer.size, limit - out.size()))
+        if (read < 0) break
+        out.write(buffer, 0, read)
+    }
+    return out.toByteArray()
+}
 
 /**
  * The extension for a book file, from its first bytes (names and labels can't be trusted):

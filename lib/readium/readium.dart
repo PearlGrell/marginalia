@@ -16,6 +16,23 @@ class Readium {
     }
   }
 
+  /// The first place [query] is found in the open book, or null: its locator (JSON), the
+  /// chapter's title, the words around it and how far through the book it is.
+  Future<({String locator, String? title, String? before, String? after, double? progression})?> find(
+    String publicationId,
+    String query,
+  ) async {
+    final m = await _channel.invokeMapMethod<String, Object?>('find', {'id': publicationId, 'query': query});
+    if (m == null || m['locator'] is! String) return null;
+    return (
+      locator: m['locator']! as String,
+      title: m['title'] as String?,
+      before: m['before'] as String?,
+      after: m['after'] as String?,
+      progression: (m['progression'] as num?)?.toDouble(),
+    );
+  }
+
   Future<void> close(String publicationId) =>
       _channel.invokeMethod('close', {'id': publicationId});
 

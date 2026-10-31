@@ -12,6 +12,7 @@ import '../data/database.dart';
 import '../data/library.dart';
 import '../stats/reading_goals.dart';
 import '../stats/streak_reminder.dart';
+import '../library/kindle_import.dart';
 import '../reader/reader_sheets.dart';
 import '../theme/tokens.dart';
 import '../words/review_reminder.dart';
@@ -279,6 +280,22 @@ class LibrarySettingsScreen extends ConsumerWidget {
             subtitle: 'Books and collections you have shared, and stopping them',
             onTap: () => context.push('/settings/shared'),
           ),
+        _NavTile(
+          icon: Icons.local_library_outlined,
+          title: 'Import a Calibre library',
+          subtitle: 'Its books, with their series, tags, ratings and descriptions',
+          onTap: () async {
+            final messenger = ScaffoldMessenger.of(context);
+            final result = await ref.read(libraryImporterProvider.notifier).importCalibreLibrary();
+            if (result != null) messenger.showSnackBar(SnackBar(content: Text(result.summary)));
+          },
+        ),
+        _NavTile(
+          icon: Icons.format_quote_outlined,
+          title: 'Import Kindle highlights',
+          subtitle: 'From My Clippings.txt, into the same books in your library',
+          onTap: () => importKindleHighlights(context, ref),
+        ),
         _NavTile(
           icon: Icons.archive_outlined,
           title: 'Export everything',

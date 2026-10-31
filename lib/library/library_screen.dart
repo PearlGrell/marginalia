@@ -9,6 +9,7 @@ import '../data/library.dart';
 import '../storage/local_store.dart';
 import '../theme/tokens.dart';
 import 'book_cover.dart';
+import 'kindle_import.dart';
 import 'shelf.dart';
 
 class LibraryScreen extends ConsumerStatefulWidget {
@@ -83,6 +84,24 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               onTap: () {
                 Navigator.pop(context);
                 context.push('/settings/folders');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.local_library_outlined),
+              title: const Text('Add a Calibre library'),
+              subtitle: const Text('Its books, with their series, tags and ratings'),
+              onTap: () {
+                Navigator.pop(context);
+                _import((i) => i.importCalibreLibrary());
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.format_quote_outlined),
+              title: const Text('Kindle highlights'),
+              subtitle: const Text('From My Clippings.txt, into the same books here'),
+              onTap: () {
+                Navigator.pop(context);
+                importKindleHighlights(this.context, ref);
               },
             ),
             ListTile(

@@ -14,6 +14,7 @@ import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.content.Content
 import org.readium.r2.shared.publication.services.content.content
+import org.readium.r2.shared.publication.services.search.search
 
 /**
  * Publication-level calls from Dart: opening and closing books.
@@ -59,6 +60,17 @@ class ReadiumChannel(
                     result.success(withContext(Dispatchers.Default) { publication.textRange(fromChapter, after, toChapter, upTo) })
                 }
             }
+            "find" -> {
+                // Where a passage is in the book (a highlight brought in from elsewhere): the
+                // first place it's found, as the reader's own search gives it, or null.
+                val publication = call.argument<String>("id")?.let(repository::get)
+                    ?: return result.error("bad_args", "The book is not open", null)
+                val query = call.argument<String>("query")?.trim().orEmpty()
+                if (query.isEmpty()) return result.success(null)
+                scope.launch {
+                    result.success(runCatching { publication.findFirst(query) }.getOrNull())
+                }
+            }
             "close" -> {
                 call.argument<String>("id")?.let(repository::close)
                 result.success(null)
@@ -74,6 +86,25 @@ class ReadiumChannel(
 
     companion object {
         const val CHANNEL = "marginalia/readium"
+    }
+}
+
+/** The first place [query] is found in the book, as `{locator, title, before, match, after, progression}`. */
+private suspend fun Publication.findFirst(query: String): Map<String, Any?>? {
+    val iterator = search(query) ?: return null
+    try {
+        val page = iterator.next().getOrNull() ?: return null
+        val locator = page.locators.firstOrNull() ?: return null
+        return mapOf(
+            "locator" to locator.toJSON().toString(),
+            "title" to locator.title,
+            "before" to locator.text.before,
+            "match" to locator.text.highlight,
+            "after" to locator.text.after,
+            "progression" to locator.locations.totalProgression,
+        )
+    } finally {
+        iterator.close()
     }
 }
 

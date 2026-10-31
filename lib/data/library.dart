@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../storage/local_store.dart';
+import '../library/calibre.dart';
 import 'database.dart';
 
 final databaseProvider = Provider<AppDatabase>((ref) {
@@ -82,6 +83,18 @@ class _NativeLibrary {
         (uri: item['uri']! as String, name: item['name']! as String),
     ];
   }
+
+  /// Every book under [uri], each with its Calibre `metadata.opf` text, if it has one.
+  Future<List<({String uri, String name, String? opf})>> scanCalibre(String uri) async {
+    final list = await _channel.invokeListMethod<Map<Object?, Object?>>('scanFolder', {'uri': uri, 'opf': true});
+    return [
+      for (final item in list ?? const <Map<Object?, Object?>>[])
+        (uri: item['uri']! as String, name: item['name']! as String, opf: item['opf'] as String?),
+    ];
+  }
+
+  /// The text of a file the reader picks, or null.
+  Future<String?> pickTextFile() => _channel.invokeMethod<String>('pickTextFile');
 
   Future<Map<Object?, Object?>> importFile(String uri) async =>
       (await _channel.invokeMapMethod<Object?, Object?>('importFile', {'uri': uri}))!;
@@ -168,6 +181,59 @@ class LibraryImporter extends Notifier<ImportProgress> {
     final files = await _native.scanFolder(folder);
     return _importAll(files);
   }
+
+  /// A Calibre library folder: its books, with what Calibre knows of each (series, tags,
+  /// rating, description) added to what the book's file says. Books already here get
+  /// Calibre's series, tags and rating too. Returns null if nothing was picked.
+  Future<ImportProgress?> importCalibreLibrary() async {
+    final folder = await _native.pickFolder();
+    if (folder == null) return null;
+    state = const ImportProgress(running: true, current: 'Looking for books…');
+    final files = await _native.scanCalibre(folder);
+    state = ImportProgress(total: files.length, running: true);
+    for (final file in files) {
+      state = state.copyWith(current: file.name);
+      try {
+        final (:added, :id) = await _importOne(file.uri, file.name);
+        if (file.opf case final opf?) {
+          if (parseCalibreOpf(opf) case final metadata?) await _applyCalibre(id, metadata);
+        }
+        state = state.copyWith(
+          added: state.added + (added ? 1 : 0),
+          duplicates: state.duplicates + (added ? 0 : 1),
+        );
+      } on PlatformException {
+        state = state.copyWith(failed: state.failed + 1);
+      }
+      state = state.copyWith(done: state.done + 1);
+    }
+    final finished = state.copyWith(running: false);
+    state = finished;
+    return finished;
+  }
+
+  /// Calibre's series, tags, rating and description for book [id]: tags join the book's own;
+  /// the rest fill in what's missing (a rating or series set here is kept).
+  Future<void> _applyCalibre(String id, CalibreMetadata m) async {
+    final book = await _db.getBook(id);
+    if (book == null) return;
+    final tags = {...book.tags, ...m.tags}.toList();
+    await _db.updateBook(
+      id,
+      BooksCompanion(
+        series: book.series == null && m.series != null ? Value(m.series) : const Value.absent(),
+        seriesIndex: book.series == null && m.seriesIndex != null ? Value(m.seriesIndex) : const Value.absent(),
+        tags: tags.length != book.tags.length ? Value(tags) : const Value.absent(),
+        ratingHalves: book.ratingHalves == 0 && m.ratingHalves != null ? Value(m.ratingHalves!) : const Value.absent(),
+        description: (book.description ?? '').trim().isEmpty && m.description != null
+            ? Value(m.description)
+            : const Value.absent(),
+      ),
+    );
+  }
+
+  /// The text of a file the reader picks (a Kindle's My Clippings.txt), or null.
+  Future<String?> pickTextFile() => _native.pickTextFile();
 
   /// Picks a file for [book] and keeps it only if it is that book (same fingerprint).
   Future<bool> linkFile(Book book) async {
