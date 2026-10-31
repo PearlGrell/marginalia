@@ -14,6 +14,7 @@ import '../stats/reading_goals.dart';
 import '../stats/streak_reminder.dart';
 import '../reader/reader_sheets.dart';
 import '../theme/tokens.dart';
+import '../words/review_reminder.dart';
 import 'app_settings.dart';
 import 'library_export.dart';
 
@@ -64,7 +65,7 @@ class SettingsScreen extends ConsumerWidget {
           _NavTile(
             icon: Icons.flag_outlined,
             title: 'Goals and reminders',
-            subtitle: 'Your reading, goals, the evening reminder',
+            subtitle: 'Your reading, goals, reminders',
             onTap: () => context.push('/settings/goals'),
           ),
           _NavTile(
@@ -192,6 +193,8 @@ class GoalsSettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final reminder = ref.watch(streakReminderProvider);
     final notifier = ref.read(streakReminderProvider.notifier);
+    final words = ref.watch(reviewReminderProvider);
+    final wordsNotifier = ref.read(reviewReminderProvider.notifier);
     return _SubPage(
       title: 'Goals and reminders',
       children: [
@@ -225,6 +228,26 @@ class GoalsSettingsScreen extends ConsumerWidget {
             final time = await showTimePicker(context: context, initialTime: reminder.time);
             if (time != null) {
               await notifier.set(StreakReminder(enabled: true, minuteOfDay: time.hour * 60 + time.minute));
+            }
+          },
+        ),
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: Space.gutter),
+          leading: const Icon(Icons.style_outlined),
+          title: const Text('Words reminder'),
+          subtitle: Text(
+            words.enabled
+                ? 'At ${words.time.format(context)} when saved words are due. Tap to change the time'
+                : 'A daily nudge when words you saved are due for review',
+          ),
+          trailing: Switch(
+            value: words.enabled,
+            onChanged: (on) => wordsNotifier.set(ReviewReminder(enabled: on, minuteOfDay: words.minuteOfDay)),
+          ),
+          onTap: () async {
+            final time = await showTimePicker(context: context, initialTime: words.time);
+            if (time != null) {
+              await wordsNotifier.set(ReviewReminder(enabled: true, minuteOfDay: time.hour * 60 + time.minute));
             }
           },
         ),

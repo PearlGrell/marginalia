@@ -8,6 +8,7 @@ import 'app.dart';
 import 'cloud/background_sync.dart';
 import 'stats/streak_reminder.dart';
 import 'storage/local_store.dart';
+import 'words/review_reminder.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,8 +22,9 @@ Future<void> main() async {
   final store = await LocalStore.open();
   // Background work: syncing (with cloud set up) and the reading reminder.
   await Workmanager().initialize(backgroundSyncDispatcher);
-  // Keep the reminder's next check in place (WorkManager drops one-off work on some updates).
+  // Keep the reminders' next checks in place (WorkManager drops one-off work on some updates).
   await StreakReminder.fromJson(store.readJson(StreakReminder.key)).schedule();
+  await ReviewReminder.fromJson(store.readJson(ReviewReminder.key)).schedule();
   runApp(
     ProviderScope(
       overrides: [localStoreProvider.overrideWithValue(store)],

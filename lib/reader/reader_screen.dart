@@ -28,6 +28,7 @@ import 'page_turn/turn_painters.dart';
 import '../listen/listen_controller.dart';
 import '../listen/player_bar.dart';
 import '../share/share_sheet.dart' show shareText;
+import '../stats/stats_screen.dart' show sessionsProvider;
 import '../share/page_card.dart';
 import '../stats/reading_stats.dart';
 import '../storage/local_store.dart';
@@ -1132,10 +1133,26 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     );
   }
 
+  /// "4 h left in the book · done by Friday at your pace", for the bottom panel.
+  String? _bookTimeLeft() {
+    final position = _location?.position;
+    final chapters = _publication?.chapters;
+    if (position == null || chapters == null || chapters.isEmpty) return null;
+    final sessions = ref.watch(sessionsProvider).value ?? const <ReadingSession>[];
+    final now = DateTime.now();
+    return bookTimeLeft(
+      positionsLeft: chapters.last.end - position,
+      secondsPerPosition: _state.secondsPerPosition,
+      secondsReadByDay: secondsByDay([for (final s in sessions) (startedAt: s.startedAt, seconds: s.seconds)], now),
+      now: now,
+    );
+  }
+
   Widget _buildBottomPanel(PageColors theme) {
     final text = Theme.of(context).textTheme;
     final total = _scrubValue ?? _location?.totalProgression ?? 0;
     final chapter = _location?.title;
+    final bookLeft = _scrubValue == null ? _bookTimeLeft() : null;
 
     return Positioned(
       left: 0,
@@ -1176,6 +1193,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                       ),
                     ],
                   ),
+                  if (bookLeft != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        bookLeft,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodySmall?.copyWith(color: theme.muted),
+                      ),
+                    ),
                   Slider(
                     value: total.clamp(0.0, 1.0),
                     onChanged: (v) => setState(() => _scrubValue = v),

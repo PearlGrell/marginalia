@@ -67,4 +67,50 @@ void main() {
       'Ch 3 of 3 · 15 pages, 38 min left',
     );
   });
+
+  group('time left in the book', () {
+    // Saturday 31 October 2026, mid-morning.
+    final now = DateTime(2026, 10, 31, 10);
+
+    test('no recent reading: just the time left', () {
+      expect(
+        bookTimeLeft(positionsLeft: 90, secondsPerPosition: 60, secondsReadByDay: List.filled(14, 0), now: now),
+        '1 h 30 min left in the book',
+      );
+    });
+
+    test('at half an hour a day, 90 minutes is done on the third day', () {
+      expect(
+        bookTimeLeft(positionsLeft: 90, secondsPerPosition: 60, secondsReadByDay: List.filled(14, 1800), now: now),
+        '1 h 30 min left in the book · done by Monday at your pace',
+      );
+    });
+
+    test('what fits in a day is today; a long way off is a date', () {
+      expect(
+        bookTimeLeft(positionsLeft: 10, secondsPerPosition: 60, secondsReadByDay: List.filled(14, 1800), now: now),
+        '10 min left in the book · done today at your pace',
+      );
+      expect(
+        bookTimeLeft(positionsLeft: 600, secondsPerPosition: 60, secondsReadByDay: List.filled(14, 1800), now: now),
+        '10 h left in the book · done by 19 Nov at your pace',
+      );
+    });
+
+    test('nothing left, nothing said', () {
+      expect(bookTimeLeft(positionsLeft: 0, secondsPerPosition: 60, secondsReadByDay: const [], now: now), isNull);
+    });
+
+    test('sessions count on the day they started, back two weeks', () {
+      final days = secondsByDay([
+        (startedAt: DateTime(2026, 10, 31, 8), seconds: 600),
+        (startedAt: DateTime(2026, 10, 30, 23), seconds: 300),
+        (startedAt: DateTime(2026, 10, 1), seconds: 999),
+      ], now);
+      expect(days.length, 14);
+      expect(days[0], 600);
+      expect(days[1], 300);
+      expect(days.fold(0, (a, b) => a + b), 900);
+    });
+  });
 }

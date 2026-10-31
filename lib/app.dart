@@ -34,6 +34,7 @@ import 'share/quote_screen.dart';
 import 'stats/stats_screen.dart';
 import 'share/shared_screens.dart';
 import 'theme/system_bars.dart';
+import 'words/review_reminder.dart';
 import 'words/review_screen.dart';
 
 final _rootNavigator = GlobalKey<NavigatorState>();
@@ -243,6 +244,12 @@ class _TabsState extends ConsumerState<_Tabs> {
       return null;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _openFromAnotherApp());
+    // The words reminder, tapped: straight to the review.
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => listenForReviewTaps(() {
+        if (mounted) context.push('/words/review');
+      }),
+    );
     // The home-screen widget follows the book being read.
     ref.listenManual(continueReadingProvider, (_, next) => _updateWidget(next.value), fireImmediately: true);
     // And shows the streak and today's reading.
