@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:marginalia/companion/book_memory.dart';
 import 'package:marginalia/companion/conversation.dart';
 import 'package:marginalia/companion/retrieval.dart';
+import 'package:marginalia/readium/readium.dart';
 
 /// A model that writes [replies] in turn (in two pieces, as a real one streams), keeping the
 /// prompts it was given; [full] says which follow-ups find the conversation full. [once] gives
@@ -187,6 +188,50 @@ void main() {
     expect(text, isNot(contains('Project Gutenberg')));
     expect(text, isNot(contains('long and sad tale')));
     expect(text, contains('Caucus-race'));
+    await dir.delete(recursive: true);
+  });
+
+  // As many EPUBs have it (Calibre's, for one): every chapter in the contents is a link into its
+  // file (#fragment), and a dedication the contents leave out comes before the first.
+  PublicationInfo fragmentLinkedBook() {
+    ChapterPositions file(int i, int count) => ChapterPositions(href: 'text/part$i.html', start: 1, count: count);
+    return PublicationInfo(
+      id: 'x',
+      title: 'The Lighthouse Keeper',
+      authors: const ['A. Writer'],
+      language: 'en',
+      isRightToLeft: false,
+      toc: const [
+        TocEntry(title: 'The Lighthouse Keeper', href: 'text/part0.html#a', children: []),
+        TocEntry(title: 'Chapter 1 - The Storm', href: 'text/part2.html#b', children: []),
+        TocEntry(title: 'Chapter 2 - The Wreck', href: 'text/part3.html#c', children: []),
+        TocEntry(title: 'Copyright page', href: 'text/part4.html#d', children: []),
+      ],
+      chapters: [file(0, 1), file(1, 2), file(2, 9), file(3, 9), file(4, 1)],
+    );
+  }
+
+  test('a dedication the contents leave out isn’t a chapter', () {
+    final sections = storyChaptersOf(fragmentLinkedBook());
+    expect(
+      [for (final s in sections) if (s.isStory) (s.number, s.title)],
+      [(1, 'Chapter 1 - The Storm'), (2, 'Chapter 2 - The Wreck')],
+    );
+  });
+
+  test('the reader’s chapter is their page’s, with nothing of it kept yet', () async {
+    final dir = await Directory.systemTemp.createTemp('book');
+    File('${dir.path}/state.json').writeAsStringSync(jsonEncode({
+      'chapters': [for (final c in storyChaptersOf(fragmentLinkedBook())) c.toJson()],
+    }));
+    File('${dir.path}/text.jsonl').writeAsStringSync([
+      {'c': 1, 'p': 0.0, 't': 'For my mother, who kept the light.'},
+      {'c': 2, 'p': 0.1, 't': 'The storm came in off the sea a little after dark.'},
+    ].map(jsonEncode).join('\n'));
+    final data = await buildBookData(dir.path, (chapter: 3, progression: 0.5), 'The Lighthouse Keeper', null);
+
+    expect(data.current?.title, 'Chapter 2 - The Wreck');
+    expect(data.current?.number, 2);
     await dir.delete(recursive: true);
   });
 

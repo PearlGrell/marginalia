@@ -4,8 +4,10 @@ import app.marginalia.listen.Gender
 import app.marginalia.listen.Narrator
 import app.marginalia.listen.Narrators
 import app.marginalia.listen.VoiceInfo
+import app.marginalia.listen.joinSentences
 import app.marginalia.listen.matchKey
 import app.marginalia.listen.sameSentence
+import app.marginalia.listen.spokenText
 import app.marginalia.readium.Follow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -65,5 +67,36 @@ class ListenTest {
         val readium = matchKey("She said nothing at all, and went upstairs.")
         assertTrue(sameSentence(readium, page))
         assertFalse(sameSentence(matchKey("He came back the next day."), page))
+    }
+
+    /** The sentences [joinSentences] makes of [pieces] (as ICU cut them), joined by spaces. */
+    private fun sentences(vararg pieces: String): List<String> {
+        val text = pieces.joinToString(" ")
+        var start = 0
+        val ranges = pieces.map { piece -> (start until start + piece.length).also { start += piece.length + 1 } }
+        return joinSentences(text, ranges).map { text.substring(it) }
+    }
+
+    @Test
+    fun sentencesDontEndAtTitlesInitialsOrEllipses() {
+        assertEquals(
+            listOf("“Winky,” said Hermione firmly, “I’m quite sure Mr. Crouch is getting along.", "We’ve seen him."),
+            sentences("“Winky,” said Hermione firmly, “I’m quite sure Mr.", "Crouch is getting along.", "We’ve seen him."),
+        )
+        assertEquals(listOf("By J. K. Rowling."), sentences("By J.", "K.", "Rowling."))
+        assertEquals(
+            listOf("But Winky is not saying . . .", "Winky keeps her secrets. . . .”"),
+            sentences("But Winky is not saying .", ".", ".", "Winky keeps her secrets.", ".", ".", ".”"),
+        )
+        assertEquals(listOf("It was late.", "Mr. Bagman came."), sentences("It was late.", "Mr.", "Bagman came."))
+    }
+
+    @Test
+    fun dashesAreSpokenAsShortPauses() {
+        assertEquals("“Bagman, bad?” said Harry.", spokenText("“Bagman — bad?” said Harry."))
+        assertEquals("We’ve seen him, you know”", spokenText("We’ve seen him, you know —”"))
+        assertEquals("Winky, Winky keeps her master’s secrets…”", spokenText("Winky — Winky keeps her master’s secrets. . . .”"))
+        assertEquals("“Well, I never.”", spokenText("“—Well—I never.”"))
+        assertEquals("Pages 10–12.", spokenText("Pages 10–12."))
     }
 }

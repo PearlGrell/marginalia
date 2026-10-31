@@ -97,6 +97,10 @@ List<StoryChapter> storyChaptersOf(PublicationInfo publication) {
   final sorted = [for (final (_, l) in indexed) l];
 
   final bookTitle = _words(publication.title).join();
+  bool front(String title) => _notStory.hasMatch(title) || (bookTitle.isNotEmpty && _words(title).join() == bookTitle);
+  // Where the contents' story starts: files they leave out before it are front matter (a
+  // dedication, an epigraph), not chapters.
+  final firstStory = sorted.where((l) => !front(l.title)).firstOrNull?.file ?? 0;
   final out = <StoryChapter>[];
   var number = 0;
   void add(int file, String title, {String? heading, required bool story}) {
@@ -106,14 +110,15 @@ List<StoryChapter> storyChaptersOf(PublicationInfo publication) {
   for (final (file, chapter) in publication.chapters.indexed) {
     final here = [for (final l in sorted) if (l.file == file) l];
     if (here.isEmpty) {
-      // A file the contents leave out: a chapter of its own if it's more than a page.
-      if (chapter.count > 1) add(file, '', story: true);
+      // A file the contents leave out: a chapter of its own if it's more than a page, and
+      // after the story has started.
+      if (chapter.count > 1) add(file, '', story: file >= firstStory);
       continue;
     }
     for (final (i, l) in here.indexed) {
-      final front = _notStory.hasMatch(l.title) || (bookTitle.isNotEmpty && _words(l.title).join() == bookTitle);
+      final isFront = front(l.title);
       final division = _division.hasMatch(l.title) && i + 1 < here.length;
-      add(file, l.title, heading: l.fragment || i > 0 ? l.title : null, story: !front && !division);
+      add(file, l.title, heading: l.fragment || i > 0 ? l.title : null, story: !isFront && !division);
     }
   }
   return out;
@@ -452,11 +457,15 @@ Future<BookData> buildBookData(String dir, Place place, String title, String? au
   ];
   final placed = sectionsOf(sections, all);
 
-  // Where the reader is: the section of the last paragraph kept up to the page, or the one
-  // the page's file starts with.
+  // Where the reader is: the section of the last paragraph kept up to the page, or else the
+  // one the page's file starts with (its first, heading or not: see [sectionsOf]), or the last
+  // one before it.
+  final fileStart = sections.indexWhere((s) => s.index == place.chapter);
   final here = placed.isNotEmpty && all.last.chapter == place.chapter
       ? placed.last
-      : sections.lastIndexWhere((s) => s.index <= place.chapter && s.heading == null);
+      : fileStart >= 0
+      ? fileStart
+      : sections.lastIndexWhere((s) => s.index < place.chapter);
   final current = here >= 0 && sections[here].isStory ? sections[here] : null;
 
   // Story chapters only, numbered from here on as chapter N is paragraph chapter N - 1.

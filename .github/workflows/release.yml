@@ -76,6 +76,11 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
 
+      # After the build, which writes android/gradlew; a failure stops the release.
+      - name: Unit tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --console=plain
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APK }}
