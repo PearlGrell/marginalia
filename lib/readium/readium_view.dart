@@ -210,6 +210,18 @@ class ReadiumViewController {
     }
   }
 
+  /// Clears text left selected in the page with no menu for it (Readium ignores every tap
+  /// while any is); whether there was some.
+  Future<bool> clearStaleSelection() async {
+    try {
+      return await _channel.invokeMethod<bool>('clearStaleSelection') ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
   Future<void> clearSelection() async {
     try {
       await _channel.invokeMethod('clearSelection');

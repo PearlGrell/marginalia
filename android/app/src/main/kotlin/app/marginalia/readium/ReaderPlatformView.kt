@@ -324,10 +324,16 @@ class ReaderPlatformView(
             "clearSelection" -> {
                 navigator.clearSelection()
                 selectionMenu.finish()
+                scope.launch { clearAllSelections() }
                 result.success(null)
             }
             "hasSelection" -> scope.launch {
-                result.success(navigator.currentSelection() != null || selectionMenu.isOpen)
+                result.success(selectionMenu.isOpen || anySelection())
+            }
+            "clearStaleSelection" -> scope.launch {
+                // Text left selected with no menu for it: Readium ignores every tap while any is
+                // (its script only reports taps when nothing is selected).
+                result.success(!selectionMenu.isOpen && clearAllSelections())
             }
             "insertTranslation" -> {
                 val id = call.argument<String>("id")
@@ -438,6 +444,37 @@ class ReaderPlatformView(
             is Follow.Scroll -> navigator.evaluateJavascript("window.scrollBy(0, ${move.by});")
             Follow.Unknown -> navigator.go(locator, animated = false)
         }
+    }
+
+    /**
+     * The page views the navigator has loaded: the page on screen and the chapters either side
+     * (a paginated book keeps its neighbours ready). Readium's own clearing reaches only the one
+     * it takes for current, which can be another than the one shown, leaving text selected.
+     */
+    private fun webViews(): List<WebView> {
+        val found = mutableListOf<WebView>()
+        fun walk(view: View) {
+            if (view is WebView) found += view
+            if (view is ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i))
+        }
+        walk((visual as? Fragment)?.view ?: container)
+        return found
+    }
+
+    private suspend fun evaluate(view: WebView, script: String): String? =
+        suspendCancellableCoroutine { cont -> view.evaluateJavascript(script) { if (cont.isActive) cont.resume(it) } }
+
+    /** Whether text is selected in any of the page views. */
+    private suspend fun anySelection(): Boolean =
+        webViews().any { evaluate(it, HAS_SELECTION_SCRIPT) == "true" }
+
+    /** Clears the selection in every page view; whether any had one. */
+    private suspend fun clearAllSelections(): Boolean {
+        var had = false
+        for (view in webViews()) {
+            if (evaluate(view, CLEAR_SELECTION_SCRIPT) == "true") had = true
+        }
+        return had
     }
 
     /** A Highlight, Note, Define or Copy picked from the selection menu. */
@@ -559,6 +596,15 @@ class ReaderPlatformView(
         private const val HIGHLIGHTS = "highlights"
         private const val SPOKEN = "spoken"
         private const val SEARCH = "search"
+        /** Whether the page has text selected (Readium won't report taps while it has). */
+        private const val HAS_SELECTION_SCRIPT =
+            "(function(){var s=window.getSelection();return !!s&&!s.isCollapsed&&s.toString().trim().length>0;})()"
+
+        /** Clears the page's selection; says whether there was one. */
+        private const val CLEAR_SELECTION_SCRIPT =
+            "(function(){var s=window.getSelection();var had=!!s&&!s.isCollapsed;if(s)s.removeAllRanges();" +
+                "if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();return had;})()"
+
         private const val MAX_SEARCH_RESULTS = 300
 
         /** Marks the paragraph around the selection; returns {id, text} as JSON. */

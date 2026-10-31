@@ -956,11 +956,27 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final touch = _touch;
     _touch = null;
     _checkSelectionSoon();
-    if (!_selecting || touch == null) return;
+    if (touch == null) return;
     final tap = (event.position - touch.at).distance < 12 && DateTime.now().difference(touch.when) < const Duration(milliseconds: 350);
     if (!tap) return;
-    _controller?.clearSelection();
-    _setSelecting(false);
+    if (_selecting) {
+      _controller?.clearSelection();
+      _setSelecting(false);
+    } else if (!_chromeVisible && _previously == null) {
+      unawaited(_recoverTap(event.position));
+    }
+  }
+
+  /// A tap on the page with nothing selected that the page may have swallowed: Readium only
+  /// reports taps while no text is selected, and a selection can be left behind where it can't
+  /// be seen (in a chapter beside the one shown). If one was, it's cleared, and the tap does what
+  /// it would have done.
+  Future<void> _recoverTap(Offset position) async {
+    final controller = _controller;
+    if (controller == null) return;
+    if (!await controller.clearStaleSelection() || !mounted) return;
+    final size = MediaQuery.sizeOf(context);
+    await _onPageTap(Offset(position.dx / size.width, position.dy / size.height));
   }
 
   Widget _buildPages(ReaderPreferences prefs, PageColors theme, Map<String, Object?> readium) {
