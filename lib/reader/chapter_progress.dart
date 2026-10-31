@@ -1,8 +1,10 @@
+import '../companion/book_memory.dart';
 import '../readium/readium.dart';
 
 /// Where the reader is in the chapter, for under the page: "Ch 4 of 22 · 6 pages, 12 min
-/// left". Chapters are the book's longer reading-order items (covers, title pages and the like
-/// aren't counted). Null on a page too short to say (a cover, a contents page).
+/// left". Chapters are the book's story chapters, as the companion counts them (see
+/// [storyChaptersOf]): front and back matter aren't counted. Null on a page too short to say
+/// (a cover, a contents page) or that isn't in a chapter.
 String? chapterProgress(
   PublicationInfo publication, {
   required String href,
@@ -12,8 +14,16 @@ String? chapterProgress(
 }) {
   final chapter = publication.chapterFor(href);
   if (chapter == null || chapter.count <= 1) return null;
-  final chapters = publication.chapters.where((c) => c.count > 1).toList();
-  final number = 'Ch ${chapters.indexOf(chapter) + 1} of ${chapters.length}';
+  final sections = _sections[publication] ??= storyChaptersOf(publication);
+  final file = publication.chapters.indexOf(chapter);
+  // The file's first chapter (later ones in it start somewhere on its pages), or, for a file
+  // with none of its own, the one before it carries on.
+  final inFile = sections.where((s) => s.index == file);
+  final section = inFile.isNotEmpty
+      ? inFile.where((s) => s.isStory).firstOrNull
+      : sections.where((s) => s.index < file).lastOrNull;
+  if (section == null || !section.isStory) return null;
+  final number = 'Ch ${section.number} of ${sections.where((s) => s.isStory).length}';
 
   final double remaining;
   if (position != null && position >= chapter.start && position <= chapter.end) {
@@ -33,3 +43,6 @@ String? chapterProgress(
   };
   return '$number · $pages ${pages == 1 ? 'page' : 'pages'}, $time left';
 }
+
+/// Each book's sections, worked out once (this runs on every page).
+final _sections = Expando<List<StoryChapter>>();
