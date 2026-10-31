@@ -45,16 +45,16 @@ Future<void> showCompanionSheet(
 );
 
 /// Asks before Gemma's download: its size, Wi-Fi, and its terms. True to go ahead.
-Future<bool> confirmGemmaDownload(BuildContext context) async =>
+Future<bool> confirmGemmaDownload(BuildContext context, {GemmaSize size = GemmaSize.small}) async =>
     await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         icon: const Icon(Icons.auto_awesome_outlined),
-        title: const Text('Download Gemma?'),
-        content: const Text(
-          'Gemma 3 is a small AI model from Google that runs on your phone, so questions about '
-          'your book never leave it.\n\n'
-          'It’s a one-time download of ${GemmaPack.sizeLabel}; Wi-Fi recommended. You can remove it '
+        title: Text('Download ${size.label}?'),
+        content: Text(
+          '${size == GemmaSize.small ? 'Gemma 3 is a small AI model' : 'Gemma 3n is an AI model'} from Google '
+          'that runs on your phone, so questions about your book never leave it.\n\n'
+          'It’s a one-time download of ${size.sizeLabel}; Wi-Fi recommended. You can remove it '
           'in Settings › Downloads.\n\n'
           'Gemma is provided under and subject to the Gemma Terms of Use (${GemmaPack.termsUrl}).',
         ),
@@ -180,10 +180,13 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
     super.dispose();
   }
 
-  /// The model writing here: Nano where the phone has it, else Gemma once downloaded.
+  /// The model writing here: the larger Gemma if it's here (it writes better than Nano), else
+  /// Nano where the phone has it, else the small Gemma once downloaded.
   CompanionModel? _model() {
+    final gemma = ref.read(gemmaProvider).size;
+    if (gemma == GemmaSize.large) return GemmaModel(_gemma);
     if (_status == NanoStatus.available) return const NanoModel();
-    if (ref.read(gemmaProvider).installed) return GemmaModel(_gemma);
+    if (gemma != null) return GemmaModel(_gemma);
     return null;
   }
 
@@ -308,7 +311,7 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
     ref.listen(chapterSummariesProvider, (_, _) => _summariesChanged());
     // Once Gemma is in, the recap is written with it.
     ref.listen(gemmaProvider, (before, now) {
-      if (now.installed && before?.installed != true) {
+      if (now.size != null && before?.size != now.size) {
         _answers.clear();
         _conversation = null;
         _askRecap();
@@ -668,7 +671,7 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
                   Expanded(
                     child: Text(
                       gemma.busy
-                          ? 'Downloading Gemma… ${((gemma.progress ?? 0) * 100).round()}%'
+                          ? 'Downloading ${gemma.downloading!.label}… ${((gemma.progress ?? 0) * 100).round()}%'
                           : 'Get a written recap, answers and who’s who with Gemma, a model that runs on this '
                                 'phone: free, and nothing leaves the phone.',
                       style: text.bodySmall,

@@ -33,6 +33,8 @@ import kotlinx.coroutines.withContext
  *   conversation so far (or a new one, `fresh`), written as it goes (`onGemmaText {id, text}`,
  *   the text so far); error `context_full` when the conversation has no room left for it
  * - `gemmaOnce {path, prompt, maxTokens}` → Gemma's answer, outside the conversation (it's left as it was)
+ *   (`contextTokens`, both: the model's window, 2048 if not given)
+ * - `memoryBytes` → the phone's memory, for which Gemma it can run
  * - `gemmaJanky` the screen stuttered while Gemma wrote: if that was on the GPU, the CPU next time
  * - `gemmaCancel` stops the answer being written (a newer question, or the sheet closed)
  * - `gemmaClose` → lets go of Gemma (before its file is removed)
@@ -82,9 +84,10 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
                 val fresh = call.argument<Boolean>("fresh") ?: true
                 val id = call.argument<Int>("id") ?: 0
                 val maxTokens = call.argument<Int>("maxTokens") ?: DEFAULT_ANSWER
+                val window = call.argument<Int>("contextTokens") ?: MAX_TOKENS
                 scope.launch {
                     try {
-                        val answer = gemmaChat(path, prompt, fresh, maxTokens) { text ->
+                        val answer = gemmaChat(path, window, prompt, fresh, maxTokens) { text ->
                             main.post { channel.invokeMethod("onGemmaText", mapOf("id" to id, "text" to text)) }
                         }
                         result.success(answer)
@@ -101,14 +104,20 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
                 val path = call.argument<String>("path") ?: return result.error("bad_args", "path", null)
                 val prompt = call.argument<String>("prompt") ?: return result.error("bad_args", "prompt", null)
                 val maxTokens = call.argument<Int>("maxTokens") ?: DEFAULT_ANSWER
+                val window = call.argument<Int>("contextTokens") ?: MAX_TOKENS
                 scope.launch {
                     try {
-                        result.success(gemmaOnce(path, prompt, maxTokens))
+                        result.success(gemmaOnce(path, window, prompt, maxTokens))
                     } catch (e: Throwable) {
                         android.util.Log.e("Companion", "Gemma failed", e)
                         result.error("generate_failed", e.message ?: e.javaClass.simpleName, null)
                     }
                 }
+            }
+            "memoryBytes" -> {
+                val info = android.app.ActivityManager.MemoryInfo()
+                (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(info)
+                result.success(info.totalMem)
             }
             "gemmaJanky" -> {
                 val path = gemmaPath
@@ -150,6 +159,9 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
     private var gemma: LlmInference? = null
     private var gemmaPath: String? = null
     private var gemmaBackend: LlmInference.Backend? = null
+
+    /** The loaded model's window: prompt, conversation and answer together. */
+    private var gemmaWindow = MAX_TOKENS
     private val gemmaLock = Mutex()
 
     /** The conversation: Gemma keeps what it has read, so a follow-up reads only what's new. */
@@ -167,8 +179,8 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
      * wrote faster (see [noteSpeed]). A GPU driver that can't run it may take the app down rather
      * than fail, so trying it is marked on disk first: if the app dies there, it's the CPU.
      */
-    private fun loadGemma(path: String): LlmInference {
-        gemma?.takeIf { gemmaPath == path }?.let { return it }
+    private fun loadGemma(path: String, window: Int): LlmInference {
+        gemma?.takeIf { gemmaPath == path && gemmaWindow == window }?.let { return it }
         closeGemma()
         val dir = java.io.File(path).parentFile
         val choice = java.io.File(dir, "gemma-backend")
@@ -194,13 +206,14 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
                 if (backend == LlmInference.Backend.GPU) trying.writeText("1")
                 val options = LlmInference.LlmInferenceOptions.builder()
                     .setModelPath(path)
-                    .setMaxTokens(MAX_TOKENS)
+                    .setMaxTokens(window)
                     .setPreferredBackend(backend)
                     .build()
                 val model = LlmInference.createFromOptions(context, options)
                 gemma = model
                 gemmaPath = path
                 gemmaBackend = backend
+                gemmaWindow = window
                 return model
             } catch (e: Throwable) {
                 android.util.Log.w("Companion", "Gemma on $backend failed: ${e.message}")
@@ -239,11 +252,11 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
     }
 
     /** A question on its own, in a session of its own: the conversation is left as it was. */
-    private suspend fun gemmaOnce(path: String, prompt: String, maxTokens: Int): String = gemmaLock.withLock {
+    private suspend fun gemmaOnce(path: String, window: Int, prompt: String, maxTokens: Int): String = gemmaLock.withLock {
         withContext(Dispatchers.Default) {
             val started = System.nanoTime()
             cancelled = false
-            LlmInferenceSession.createFromOptions(loadGemma(path), sessionOptions()).use { session ->
+            LlmInferenceSession.createFromOptions(loadGemma(path, window), sessionOptions()).use { session ->
                 val (answer, _) = write(session, prompt, maxTokens) {}
                 // Not timed for speed: this time includes reading the prompt (see [noteSpeed]).
                 android.util.Log.i(
@@ -273,12 +286,12 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
                 )
                 .build()
 
-    private suspend fun gemmaChat(path: String, prompt: String, fresh: Boolean, maxTokens: Int, onText: (String) -> Unit): String =
+    private suspend fun gemmaChat(path: String, window: Int, prompt: String, fresh: Boolean, maxTokens: Int, onText: (String) -> Unit): String =
         gemmaLock.withLock {
             withContext(Dispatchers.Default) {
                 cancelled = false
                 try {
-                    answer(loadGemma(path), path, prompt, fresh, maxTokens, onText)
+                    answer(loadGemma(path, window), path, prompt, fresh, maxTokens, onText)
                 } catch (e: ContextFull) {
                     throw e
                 } catch (e: Throwable) {
@@ -287,7 +300,7 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
                     android.util.Log.w("Companion", "Gemma on the GPU couldn't answer: ${e.message}")
                     settleBackend(path, worked = false)
                     closeGemma()
-                    answer(loadGemma(path), path, prompt, fresh = true, maxTokens, onText)
+                    answer(loadGemma(path, window), path, prompt, fresh = true, maxTokens, onText)
                 }
             }
         }
@@ -327,7 +340,7 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
         if (fresh || chat == null) newChat(model)
         val session = chat!!
         val tokens = session.sizeInTokens(prompt)
-        if (!fresh && chatTokens + tokens + ANSWER_ROOM > MAX_TOKENS) throw ContextFull()
+        if (!fresh && chatTokens + tokens + ANSWER_ROOM > gemmaWindow) throw ContextFull()
         val started = System.nanoTime()
         val (answer, firstWord) = write(session, prompt, maxTokens, onText)
         chatTokens += tokens + session.sizeInTokens(answer) + 8
@@ -350,10 +363,11 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
         gemma = null
         gemmaPath = null
         gemmaBackend = null
+        gemmaWindow = MAX_TOKENS
     }
 
     private companion object {
-        /** The model's window (gemma3-1b-it-int4.task): prompt and answer together. */
+        /** The 1B model's window, when Dart doesn't say: prompt and answer together. */
         const val MAX_TOKENS = 2048
 
         /** Kept free in the conversation for the answer. */

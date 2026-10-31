@@ -639,9 +639,11 @@ class ChapterSummaries extends Notifier<int> {
   }
 
   Future<void> _summarise(String bookId, String title, String? authors) async {
-    final nano = await const Nano().status() == NanoStatus.available;
+    // The larger Gemma writes better than Nano; Nano better than the small Gemma.
+    final size = ref.read(gemmaProvider).size;
+    final nano = size != GemmaSize.large && await const Nano().status() == NanoStatus.available;
     final gemma = ref.read(gemmaProvider.notifier);
-    if (!nano && !ref.read(gemmaProvider).installed) return;
+    if (!nano && size == null) return;
     final memory = BookMemory(bookId);
     final sections = await memory.chapters();
     final paragraphs = await memory.paragraphs();

@@ -272,81 +272,114 @@ class _TranslationSection extends ConsumerWidget {
 
 // ---- Reading companion ----
 
-/// Gemma, for "Ask about the book" on phones without Gemini Nano.
-class _GemmaSection extends ConsumerWidget {
+/// Gemma, for "Ask about the book" on phones without Gemini Nano, or in its larger size for
+/// better answers on phones with the memory for it.
+class _GemmaSection extends ConsumerStatefulWidget {
   const _GemmaSection();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_GemmaSection> createState() => _GemmaSectionState();
+}
+
+class _GemmaSectionState extends ConsumerState<_GemmaSection> {
+  /// The phone's memory, for which size to suggest.
+  double? _memoryGb;
+
+  @override
+  void initState() {
+    super.initState();
+    ref.read(gemmaProvider.notifier).phoneMemoryGb().then((gb) {
+      if (mounted) setState(() => _memoryGb = gb);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final gemma = ref.watch(gemmaProvider);
     final pack = ref.read(gemmaProvider.notifier);
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
+    // 8 GB phones report a little under 8.
+    final roomy = (_memoryGb ?? 0) >= 7.2;
 
-    final Widget body = switch (gemma.status) {
-      GemmaStatus.installed => ListTile(
-        contentPadding: EdgeInsets.zero,
-        leading: const Icon(Icons.check_circle_outline, size: 20),
-        title: const Text('Gemma 3 (1B)'),
-        subtitle: const Text('${GemmaPack.sizeLabel} on this phone'),
-        trailing: TextButton(
-          onPressed: () async {
-            final ok = await showDialog<bool>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('Remove Gemma?'),
-                content: const Text(
-                  'This frees ${GemmaPack.sizeLabel}. Ask about the book will show passages only until '
-                  'you download it again.',
-                ),
-                actions: [
-                  TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep')),
-                  FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
-                ],
-              ),
-            );
-            if (ok == true) await pack.remove();
-          },
-          child: const Text('Remove'),
-        ),
-      ),
-      GemmaStatus.downloading => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          LinearProgressIndicator(value: gemma.progress, minHeight: 3),
-          Row(
-            children: [
-              Expanded(child: Text('Downloading… ${((gemma.progress ?? 0) * 100).round()}%', style: text.bodySmall)),
-              TextButton(onPressed: pack.cancel, child: const Text('Cancel')),
-            ],
-          ),
-        ],
-      ),
-      GemmaStatus.notInstalled || GemmaStatus.failed => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          OutlinedButton.icon(
-            icon: const Icon(Icons.download_outlined),
-            label: const Text('Download Gemma (${GemmaPack.sizeLabel})'),
-            onPressed: () async {
-              if (await confirmGemmaDownload(context)) await pack.install();
-            },
-          ),
-          if (gemma.error case final error?)
-            Padding(
-              padding: const EdgeInsets.only(top: Space.sm),
-              child: Text(error, style: text.bodySmall?.copyWith(color: scheme.error)),
+    Future<void> download(GemmaSize size) async {
+      if (await confirmGemmaDownload(context, size: size)) await pack.install(size);
+    }
+
+    Widget offer(GemmaSize size) => ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.download_outlined, size: 20),
+      title: Text('${size.label} · ${size.sizeLabel}'),
+      subtitle: Text(switch (size) {
+        GemmaSize.small => 'Quick, for any phone',
+        GemmaSize.large => roomy
+            ? 'Much better answers and summaries. Recommended for this phone'
+            : 'Much better answers, but needs a phone with 8 GB of memory; this one has '
+                  '${(_memoryGb ?? 0).toStringAsFixed(0)} GB',
+      }),
+      trailing: OutlinedButton(onPressed: gemma.busy ? null : () => download(size), child: const Text('Get')),
+    );
+
+    final installed = gemma.size;
+    final Widget body = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (installed != null)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.check_circle_outline, size: 20),
+            title: Text(installed.label),
+            subtitle: Text('${installed.sizeLabel} on this phone'),
+            trailing: TextButton(
+              onPressed: () async {
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Remove Gemma?'),
+                    content: Text(
+                      'This frees ${installed.sizeLabel}. Ask about the book will show passages only until '
+                      'you download it again.',
+                    ),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep')),
+                      FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
+                    ],
+                  ),
+                );
+                if (ok == true) await pack.remove();
+              },
+              child: const Text('Remove'),
             ),
-        ],
-      ),
-    };
+          ),
+        if (gemma.downloading case final size?) ...[
+          Text('Downloading ${size.label}… ${((gemma.progress ?? 0) * 100).round()}%', style: text.bodySmall),
+          const SizedBox(height: Space.xs),
+          LinearProgressIndicator(value: gemma.progress, minHeight: 3),
+          Align(alignment: Alignment.centerRight, child: TextButton(onPressed: pack.cancel, child: const Text('Cancel'))),
+          if (installed != null)
+            Text(
+              '${installed.label} keeps answering until it’s done, then makes way for it.',
+              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+        ] else
+          for (final size in GemmaSize.values)
+            if (size != installed) offer(size),
+        if (gemma.error case final error?)
+          Padding(
+            padding: const EdgeInsets.only(top: Space.sm),
+            child: Text(error, style: text.bodySmall?.copyWith(color: scheme.error)),
+          ),
+      ],
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'Ask about the book answers in plain words with Gemini Nano on phones that have it. On '
-          'other phones it can use Gemma, a small model that runs on your phone.',
+          'Ask about the book answers in plain words with Gemini Nano on phones that have it. Any '
+          'phone can use Gemma, a model that runs on the phone: the small one for any phone, or '
+          'the larger, much better one on phones with 8 GB of memory. When Gemma 3n is here, it '
+          'answers instead of Gemini Nano.',
           style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: Space.sm),
