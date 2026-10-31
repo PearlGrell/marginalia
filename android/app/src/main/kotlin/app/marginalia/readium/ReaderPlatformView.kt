@@ -95,7 +95,13 @@ class ReaderPlatformView(
 ) : PlatformView, MethodChannel.MethodCallHandler {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     private val channel = MethodChannel(messenger, "${ReaderViewFactory.VIEW_TYPE}/$viewId")
+    /** The menu over selected text; kept so a selection cleared from Flutter closes it too. */
+    private val selectionMenu = SelectionMenu(
+        onAction = ::onSelectionAction,
+        onActiveChanged = { active -> channel.invokeMethod("onSelectionActive", mapOf("active" to active)) },
+    )
     private val fragmentTag = "$FRAGMENT_TAG_PREFIX$viewId"
 
     private var preferences = PreferencesMapper.fromMap(initialPreferences)
@@ -210,12 +216,7 @@ class ReaderPlatformView(
                 // Flutter's band above the page already clears the notch; Readium adding it
                 // again doubled the space over the text.
                 shouldApplyInsetsPadding = false
-                selectionActionModeCallback = SelectionMenu(
-                    onAction = ::onSelectionAction,
-                    onActiveChanged = { active ->
-                        channel.invokeMethod("onSelectionActive", mapOf("active" to active))
-                    },
-                )
+                selectionActionModeCallback = selectionMenu
             },
         )
 
@@ -322,7 +323,11 @@ class ReaderPlatformView(
             }
             "clearSelection" -> {
                 navigator.clearSelection()
+                selectionMenu.finish()
                 result.success(null)
+            }
+            "hasSelection" -> scope.launch {
+                result.success(navigator.currentSelection() != null || selectionMenu.isOpen)
             }
             "insertTranslation" -> {
                 val id = call.argument<String>("id")

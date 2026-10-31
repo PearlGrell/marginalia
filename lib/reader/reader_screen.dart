@@ -93,6 +93,32 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   /// Text is selected in the page.
   bool _selecting = false;
 
+  /// When the last selection ended: the tap that ended it reaches the page a moment later, and
+  /// mustn't turn it.
+  DateTime? _selectionEndedAt;
+
+  /// Text selected in the page, or not: kept with when it ended.
+  void _setSelecting(bool selecting) {
+    if (selecting == _selecting) return;
+    if (!selecting) _selectionEndedAt = DateTime.now();
+    setState(() => _selecting = selecting);
+  }
+
+  /// A moment after a touch ends, the page is asked whether text is selected, and Flutter
+  /// follows: if a start or end was missed, touches would otherwise go to the wrong place (a
+  /// handle dragged turning the page, or pages that won't turn).
+  Timer? _selectionCheck;
+
+  void _checkSelectionSoon() {
+    _selectionCheck?.cancel();
+    _selectionCheck = Timer(const Duration(milliseconds: 450), () async {
+      final controller = _controller;
+      if (controller == null || !mounted) return;
+      final selected = await controller.hasSelection();
+      if (mounted) _setSelecting(selected);
+    });
+  }
+
   /// While the book downloads from Drive on first open.
   double? _downloadProgress;
   bool _missingFile = false;
@@ -316,6 +342,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _keeper?.close();
     _endSession(recap: true);
     _clock?.cancel();
+    _selectionCheck?.cancel();
     SystemChrome.setSystemUIChangeCallback(null);
     _controller?.dispose();
     _device.dispose();
@@ -450,7 +477,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final store = ref.read(annotationStoreProvider);
     // Picking an action ends the selection, even if the page never said so: otherwise the
     // page keeps every touch once the sheet for the action closes.
-    if (_selecting) setState(() => _selecting = false);
+    _setSelecting(false);
     switch (selection.action) {
       case 'copy':
         await Clipboard.setData(ClipboardData(text: selection.text ?? ''));
@@ -714,8 +741,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   /// While listening, a tap on a line reads on from there; otherwise taps turn pages or show
   /// the controls.
   Future<void> _onPageTap(Offset point) async {
-    // A tap clears any selection, even if the page never said the selection ended.
-    if (_selecting) setState(() => _selecting = false);
+    // A tap while text is selected only clears it; nor does the tap that just cleared one
+    // (it comes here a moment after) turn the page or show the controls.
+    if (_selecting) {
+      _setSelecting(false);
+      unawaited(_controller?.clearSelection());
+      return;
+    }
+    final ended = _selectionEndedAt;
+    if (ended != null && DateTime.now().difference(ended) < const Duration(milliseconds: 700)) return;
     // Listening, a tap on text reads from there, whatever else is showing. The very edges
     // still turn pages.
     final controller = _controller;
@@ -863,6 +897,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             behavior: HitTestBehavior.translucent,
             onPointerDown: _onPointerDown,
             onPointerUp: _onPointerUp,
+            onPointerCancel: (_) {
+              _touch = null;
+              _checkSelectionSoon();
+            },
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -917,11 +955,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   void _onPointerUp(PointerUpEvent event) {
     final touch = _touch;
     _touch = null;
+    _checkSelectionSoon();
     if (!_selecting || touch == null) return;
     final tap = (event.position - touch.at).distance < 12 && DateTime.now().difference(touch.when) < const Duration(milliseconds: 350);
     if (!tap) return;
     _controller?.clearSelection();
-    setState(() => _selecting = false);
+    _setSelecting(false);
   }
 
   Widget _buildPages(ReaderPreferences prefs, PageColors theme, Map<String, Object?> readium) {
@@ -1020,7 +1059,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             onHighlightTapped: _onHighlightTapped,
             onFootnote: _onFootnote,
             selecting: _selecting,
-            onSelectionActive: (active) => setState(() => _selecting = active),
+            onSelectionActive: _setSelecting,
           ),
         ),
         if (prefs.brightnessSwipe && !prefs.scroll && !_selecting)

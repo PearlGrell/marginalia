@@ -199,6 +199,17 @@ class ReadiumViewController {
   }
 
   /// Ends the selection on the page (a tap somewhere else, without picking from its menu).
+  /// Whether text is selected in the page (or its menu is open) right now.
+  Future<bool> hasSelection() async {
+    try {
+      return await _channel.invokeMethod<bool>('hasSelection') ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
   Future<void> clearSelection() async {
     try {
       await _channel.invokeMethod('clearSelection');

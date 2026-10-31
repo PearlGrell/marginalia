@@ -27,8 +27,34 @@ class SelectionMenu(
         "copy" to "Copy",
     )
 
+    /**
+     * The menus open now. A WebView can start a new one for a changed selection before the old
+     * one is gone, so the selection is active while any is open, not just after the last start.
+     */
+    private val open = mutableSetOf<ActionMode>()
+
+    private fun report() {
+        val active = open.isNotEmpty()
+        if (active != reported) {
+            reported = active
+            onActiveChanged(active)
+        }
+    }
+
+    private var reported = false
+
+    val isOpen: Boolean get() = open.isNotEmpty()
+
+    /** Closes the menu (the selection was cleared from outside it, so it would linger). */
+    fun finish() {
+        open.toList().forEach { runCatching { it.finish() } }
+        open.clear()
+        report()
+    }
+
     override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
-        onActiveChanged(true)
+        open += mode
+        report()
         menu.clear()
         actions.forEachIndexed { index, (_, title) ->
             // The first few stay in view; the rest go to the menu's overflow when space runs out.
@@ -47,5 +73,8 @@ class SelectionMenu(
         return true
     }
 
-    override fun onDestroyActionMode(mode: ActionMode) = onActiveChanged(false)
+    override fun onDestroyActionMode(mode: ActionMode) {
+        open -= mode
+        report()
+    }
 }
