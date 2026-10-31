@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:marginalia/clubs/clubs.dart';
+import 'package:marginalia/clubs/discussion.dart';
 
 void main() {
   test('a club code is read from what was typed or the invitation link', () {
@@ -42,5 +43,17 @@ void main() {
   test('reactions add up, most given first', () {
     expect(reactionSummary({'a': '😂', 'b': '❤️', 'c': '❤️'}), '❤️ 2  😂 1');
     expect(reactionSummary(const {}), '');
+  });
+
+  test('discussion questions are asked from what the club has read, and no further', () {
+    final prompt = discussionPrompt(
+      title: 'Emma',
+      story: 'Emma matches Harriet with Mr. Elton.',
+      recent: [(chapter: 'chapter 15', summary: 'Mr. Elton proposes to Emma instead.')],
+    );
+    expect(prompt, contains('Emma matches Harriet'));
+    expect(prompt, contains('chapter 15: Mr. Elton proposes'));
+    expect(prompt, contains('never mention or hint at anything after them'));
+    expect(prompt, contains('One question per line'));
   });
 }

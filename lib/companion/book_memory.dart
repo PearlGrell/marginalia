@@ -343,6 +343,22 @@ class BookMemory {
     await (await _file('section-summaries.json')).writeAsString(jsonEncode({for (final e in all.entries) '${e.key}': e.value}));
   }
 
+  /// What a book club's questions are written from: the story so far as remembered, and the
+  /// summaries of the last [count] chapters finished, each with its label. Only what was read
+  /// on this phone.
+  Future<({String? story, List<({String chapter, String summary})> recent})> discussionMaterial({int count = 3}) async {
+    final sections = await chapters();
+    final done = await summaries();
+    final stories = await readStories(await path());
+    final latest = stories.keys.isEmpty ? null : stories[stories.keys.reduce(math.max)];
+    final told = [
+      for (final s in sections)
+        if (s.isStory && (done[s.key]?.trim().isNotEmpty ?? false))
+          (chapter: chapterLabel(s.number, s.title), summary: done[s.key]!.trim()),
+    ];
+    return (story: latest?.story, recent: told.sublist(math.max(0, told.length - count)));
+  }
+
   /// Everything kept of the book, in reading order.
   Future<List<KeptParagraph>> paragraphs() async {
     final file = await _file('text.jsonl');

@@ -7,6 +7,7 @@ import '../data/library.dart';
 import '../share/share_sheet.dart';
 import '../theme/tokens.dart';
 import 'clubs.dart';
+import 'discussion.dart';
 
 /// Asks for a club's code (or link), then opens it.
 Future<void> joinClubByCode(BuildContext context) async {
@@ -244,12 +245,19 @@ class _ClubScreenState extends ConsumerState<ClubScreen> {
                   onPressed: _joining ? null : () => _join(club),
                   child: Text(_joining ? 'Joining…' : 'Join the club'),
                 )
-              else if (copy != null)
+              else if (copy != null) ...[
                 FilledButton.icon(
                   icon: const Icon(Icons.menu_book_outlined),
                   label: const Text('Open the book'),
                   onPressed: () => context.push('/read/${copy.id}'),
                 ),
+                const SizedBox(height: Space.sm),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.forum_outlined),
+                  label: const Text('Questions to talk about'),
+                  onPressed: () => showDiscussionSheet(context, bookId: copy.id, title: club.title),
+                ),
+              ],
               if (copy == null)
                 Padding(
                   padding: const EdgeInsets.only(top: Space.sm),
