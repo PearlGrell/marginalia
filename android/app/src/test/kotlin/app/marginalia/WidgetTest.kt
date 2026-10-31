@@ -36,4 +36,13 @@ class WidgetTest {
     fun aLapsedStreakAndNoGoalSayNothing() {
         assertNull(ContinueReadingWidget.statusLine(today, today.minusDays(3), todaySeconds = 900, streak = 2, goalMinutes = 0))
     }
+
+    @Test
+    fun theHighlightOfTheDayStaysAllDayAndMovesOnTomorrow() {
+        val quotes = listOf("a", "b", "c").map { QuoteWidget.Quote(it, "Book", "id", null) }
+        assertEquals("b", QuoteWidget.pick(quotes, epochDay = 1)?.text)
+        assertEquals("c", QuoteWidget.pick(quotes, epochDay = 2)?.text)
+        assertEquals("a", QuoteWidget.pick(quotes, epochDay = 3)?.text)
+        assertEquals(null, QuoteWidget.pick(emptyList(), epochDay = 3))
+    }
 }

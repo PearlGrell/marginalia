@@ -3,5 +3,8 @@
     <string name="widget_description">The book you\'re reading, one tap away</string>
     <string name="widget_label">Continue reading</string>
     <string name="widget_empty">Open a book in Marginalia and it appears here</string>
+    <string name="quote_widget_label">Your highlights</string>
+    <string name="quote_widget_description">A passage you highlighted, a different one each day</string>
+    <string name="quote_widget_empty">Highlight a passage while reading in Marginalia and it appears here</string>
     
 </resources>

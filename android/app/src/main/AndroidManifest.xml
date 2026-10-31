@@ -73,6 +73,18 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/continue_reading_widget"/>
         </receiver>
+        <!-- A highlight a day, on the home screen. -->
+        <receiver
+            android:name=".QuoteWidget"
+            android:exported="false"
+            android:label="@string/quote_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quote_widget"/>
+        </receiver>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="app.marginalia.files"

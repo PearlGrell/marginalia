@@ -19,6 +19,8 @@ import io.flutter.plugin.common.MethodChannel
  * - `shareFile {path, mime}` opens the share sheet with any file from the app's cache
  * - `updateWidget {bookId?, title, author, progress, coverPath}` keeps the home-screen
  *   Continue reading widget current
+ * - `updateQuotes {quotes: [{text, title, bookId, locator}]}` gives the highlight widget its
+ *   highlights to choose from
  * - `setKeepScreenOn {on}`
  * - `setVolumeKeysTurnPages {on}`: volume down/up are consumed and reported to Dart as
  *   `onVolumeKey {forward}` instead of changing the volume.
@@ -116,6 +118,12 @@ class DeviceChannel(
                         name = call.argument<String>("name") ?: "marginalia-${System.currentTimeMillis()}.png",
                     ),
                 )
+            }
+            "updateQuotes" -> {
+                @Suppress("UNCHECKED_CAST")
+                val quotes = call.argument<List<Map<String, Any?>>>("quotes") ?: emptyList()
+                QuoteWidget.update(activity, quotes)
+                result.success(null)
             }
             "updateWidget" -> {
                 ContinueReadingWidget.update(

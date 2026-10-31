@@ -22,6 +22,7 @@ import 'library/edit_book_screen.dart';
 import 'library/library_screen.dart';
 import 'library/watched_folders.dart';
 import 'notes/notes_screen.dart';
+import 'notes/quote_widget.dart';
 import 'reader/reader_screen.dart';
 import 'stats/reading_goals.dart';
 import 'stats/reading_stats.dart';
@@ -255,6 +256,9 @@ class _TabsState extends ConsumerState<_Tabs> {
     // And shows the streak and today's reading.
     ref.listenManual(sessionsProvider, (_, _) => _updateWidgetStatus(), fireImmediately: true);
     ref.listenManual(readingGoalsProvider, (_, _) => _updateWidgetStatus());
+    // The highlight widget chooses from the reader's highlights.
+    ref.listenManual(allNotesProvider, (_, _) => _updateQuotes(), fireImmediately: true);
+    ref.listenManual(allBooksProvider, (_, _) => _updateQuotes());
     ref.listenManual(accountProvider, (_, account) {
       if (!account.signedIn || _syncedThisLaunch) return;
       _syncedThisLaunch = true;
@@ -324,6 +328,23 @@ class _TabsState extends ConsumerState<_Tabs> {
     _statusShown = signature;
     try {
       await const MethodChannel('marginalia/device').invokeMethod('updateWidgetStatus', status);
+    } on MissingPluginException {
+      // In tests.
+    }
+  }
+
+  String? _quotesShown;
+
+  Future<void> _updateQuotes() async {
+    final notes = ref.read(allNotesProvider).value;
+    final books = ref.read(allBooksProvider).value;
+    if (notes == null || books == null) return;
+    final quotes = widgetQuotes(notes, books);
+    final signature = [for (final q in quotes) '${q['bookId']}|${q['text']}|${q['title']}'].join('\n');
+    if (signature == _quotesShown) return;
+    _quotesShown = signature;
+    try {
+      await const MethodChannel('marginalia/device').invokeMethod('updateQuotes', {'quotes': quotes});
     } on MissingPluginException {
       // In tests.
     }
