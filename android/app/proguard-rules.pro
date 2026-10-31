@@ -9,3 +9,7 @@
 # service leaves Listen with "no text to read aloud".
 -keepnames class org.readium.** { *; }
 
+
+# The reader clears Readium's page view's "selecting" flag when it's left set (it drops taps
+# while it is), finding it by name.
+-keepclassmembers class org.readium.r2.navigator.R2BasicWebView { boolean isSelecting; }

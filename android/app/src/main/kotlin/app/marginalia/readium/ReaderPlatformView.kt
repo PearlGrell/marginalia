@@ -328,12 +328,23 @@ class ReaderPlatformView(
                 result.success(null)
             }
             "hasSelection" -> scope.launch {
-                result.success(selectionMenu.isOpen || anySelection())
+                // What the page has selected, not whether a menu says so: a menu whose page went
+                // away can be left counted open, and Flutter would keep waiting for it to close.
+                val selected = anySelection()
+                if (!selected) {
+                    if (selectionMenu.isOpen) selectionMenu.finish()
+                    endStuckSelecting()
+                }
+                result.success(selected)
             }
             "clearStaleSelection" -> scope.launch {
-                // Text left selected with no menu for it: Readium ignores every tap while any is
-                // (its script only reports taps when nothing is selected).
-                result.success(!selectionMenu.isOpen && clearAllSelections())
+                // A tap the page didn't answer: Readium drops taps while text is selected, or
+                // while it still believes some is. Whatever was left is cleared; true if anything
+                // was, so Flutter does what the tap would have done.
+                val cleared = clearAllSelections()
+                val unstuck = endStuckSelecting()
+                if (selectionMenu.isOpen) selectionMenu.finish()
+                result.success(cleared || unstuck)
             }
             "insertTranslation" -> {
                 val id = call.argument<String>("id")
@@ -477,6 +488,29 @@ class ReaderPlatformView(
         return had
     }
 
+    /**
+     * Readium's page view keeps its own "text is selected" flag, set and cleared by the page's
+     * script as the selection changes, and drops every tap while it's set. A selection that ends
+     * without the script seeing it (the page reloaded under it, the selection cleared from here)
+     * leaves the flag set and taps dead. Ends it in every page view with nothing selected;
+     * whether any was stuck.
+     */
+    private suspend fun endStuckSelecting(): Boolean {
+        val field = selectingField ?: return false
+        var stuck = false
+        for (view in webViews()) {
+            if (!field.declaringClass.isInstance(view)) continue
+            if (evaluate(view, COLLAPSED_SCRIPT) != "true") continue
+            runCatching {
+                if (field.getBoolean(view)) {
+                    field.setBoolean(view, false)
+                    stuck = true
+                }
+            }
+        }
+        return stuck
+    }
+
     /** A Highlight, Note, Define or Copy picked from the selection menu. */
     private fun onSelectionAction(action: String) {
         val navigator = navigator ?: return
@@ -599,6 +633,18 @@ class ReaderPlatformView(
         /** Whether the page has text selected (Readium won't report taps while it has). */
         private const val HAS_SELECTION_SCRIPT =
             "(function(){var s=window.getSelection();return !!s&&!s.isCollapsed&&s.toString().trim().length>0;})()"
+
+        /** Whether the page has nothing selected at all (not even blank space). */
+        private const val COLLAPSED_SCRIPT =
+            "(function(){var s=window.getSelection();return !s||s.isCollapsed;})()"
+
+        /** Readium's page view's "selecting" flag (internal to Readium, so found by name). */
+        private val selectingField: java.lang.reflect.Field? by lazy {
+            runCatching {
+                Class.forName("org.readium.r2.navigator.R2BasicWebView")
+                    .getDeclaredField("isSelecting").apply { isAccessible = true }
+            }.getOrNull()
+        }
 
         /** Clears the page's selection; says whether there was one. */
         private const val CLEAR_SELECTION_SCRIPT =

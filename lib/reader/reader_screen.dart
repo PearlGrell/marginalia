@@ -962,22 +962,53 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     if (_selecting) {
       _controller?.clearSelection();
       _setSelecting(false);
-    } else if (!_chromeVisible && _previously == null) {
-      unawaited(_recoverTap(event.position));
     }
   }
 
-  /// A tap on the page with nothing selected that the page may have swallowed: Readium only
-  /// reports taps while no text is selected, and a selection can be left behind where it can't
-  /// be seen (in a chapter beside the one shown). If one was, it's cleared, and the tap does what
-  /// it would have done.
-  Future<void> _recoverTap(Offset position) async {
+  /// When the page last answered a touch itself (a tap, a highlight, a footnote): a tap it
+  /// answered isn't recovered.
+  DateTime _pageAnsweredAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _pageAnswered() => _pageAnsweredAt = DateTime.now();
+
+  /// Where and when a touch on the page itself began.
+  ({Offset at, DateTime when})? _pageTouch;
+
+  /// A tap on the page with nothing selected that the page may have swallowed: Readium drops
+  /// taps while it believes text is selected, and that belief can outlive the selection (or a
+  /// selection be left where it can't be seen, in a chapter beside the one shown). If the page
+  /// hasn't answered the tap in a moment and something was stuck, it's cleared and the tap does
+  /// what it would have done.
+  Future<void> _recoverTap(Offset point) async {
     final controller = _controller;
     if (controller == null) return;
+    final tappedAt = DateTime.now();
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    if (!mounted || _selecting || _pageAnsweredAt.isAfter(tappedAt)) return;
     if (!await controller.clearStaleSelection() || !mounted) return;
-    final size = MediaQuery.sizeOf(context);
-    await _onPageTap(Offset(position.dx / size.width, position.dy / size.height));
+    await _onPageTap(point);
   }
+
+  /// Watches taps on the page for ones it swallowed (see [_recoverTap]).
+  Widget _watchPageTaps(Widget page) => LayoutBuilder(
+    builder: (context, constraints) => Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (event) => _pageTouch = (at: event.localPosition, when: DateTime.now()),
+      onPointerCancel: (_) => _pageTouch = null,
+      onPointerUp: (event) {
+        final touch = _pageTouch;
+        _pageTouch = null;
+        final size = constraints.biggest;
+        if (touch == null || _selecting || size.isEmpty) return;
+        final tap = (event.localPosition - touch.at).distance < 12 &&
+            DateTime.now().difference(touch.when) < const Duration(milliseconds: 350);
+        if (!tap) return;
+        final at = event.localPosition;
+        unawaited(_recoverTap(Offset(at.dx / size.width, at.dy / size.height)));
+      },
+      child: page,
+    ),
+  );
 
   Widget _buildPages(ReaderPreferences prefs, PageColors theme, Map<String, Object?> readium) {
     final publication = _publication;
@@ -1058,7 +1089,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           onCenterTap: _toggleChrome,
           // Turning by hand while listening: the page stops following the voice.
           onTurned: _listen.stopFollowing,
-          child: ReadiumView(
+          child: _watchPageTaps(ReadiumView(
             publicationId: publication.id,
             preferences: readium,
             scroll: prefs.scroll,
@@ -1070,13 +1101,22 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               _sentHighlights = null;
             }),
             onLocationChanged: _onLocationChanged,
-            onTap: _onPageTap,
+            onTap: (point) {
+              _pageAnswered();
+              _onPageTap(point);
+            },
             onSelection: _onSelection,
-            onHighlightTapped: _onHighlightTapped,
-            onFootnote: _onFootnote,
+            onHighlightTapped: (id) {
+              _pageAnswered();
+              _onHighlightTapped(id);
+            },
+            onFootnote: (footnote) {
+              _pageAnswered();
+              _onFootnote(footnote);
+            },
             selecting: _selecting,
             onSelectionActive: _setSelecting,
-          ),
+          )),
         ),
         if (prefs.brightnessSwipe && !prefs.scroll && !_selecting)
           Positioned.fill(child: _BrightnessEdge(device: _device, theme: theme)),
