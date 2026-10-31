@@ -12,6 +12,7 @@ import 'conversation.dart';
 import 'gemma.dart';
 import 'people.dart';
 import 'previously.dart';
+import 'semantic.dart';
 
 /// The book so far, X-Ray style, never past [place]: a recap (each finished chapter's summary,
 /// then what has happened in the chapter the reader is in) with questions to follow it up, and
@@ -99,6 +100,9 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
   /// The book so far, worked out once (off the UI thread) when the sheet opens.
   BookData? _data;
 
+  /// Its passages by meaning, made ready in the background (keyword search until then).
+  SemanticIndex? _semantic;
+
   /// Chapter summaries by number, kept up to date as they're written.
   Map<int, String> _summaries = const {};
   Conversation? _conversation;
@@ -148,6 +152,8 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
     });
     // Already on its way (asked for before): wait on it here too.
     if (status == NanoStatus.downloading) unawaited(_getNano());
+    _semantic = SemanticIndex(dir: await memory.path(), index: data.book.index);
+    unawaited(_semantic!.prepare().catchError((_) {}));
     final name = widget.name?.trim();
     if (name != null && name.isNotEmpty) {
       _openPerson(name);
@@ -198,7 +204,12 @@ class _CompanionSheetState extends ConsumerState<_CompanionSheet> {
     final model = _model();
     var conversation = _conversation;
     if (conversation == null || (model == null) != (conversation.model is _NoModel)) {
-      conversation = _conversation = Conversation(book: data.book, model: model ?? const _NoModel());
+      final semantic = _semantic;
+      conversation = _conversation = Conversation(
+        book: data.book,
+        model: model ?? const _NoModel(),
+        similar: semantic == null ? null : (query) => semantic.search(query),
+      );
     }
     void keep(Turn turn) => key == _recapKey ? _recap = turn : _answers[key] = turn;
     if (model == null) {

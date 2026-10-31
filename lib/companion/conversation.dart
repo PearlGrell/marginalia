@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'companion.dart';
 import 'retrieval.dart';
+import 'semantic.dart' show fuseRankings;
 
 /// What the reader asked.
 enum AskKind { recap, who, free }
@@ -242,10 +243,18 @@ List<String> parseQuestions(String reply) {
 /// the whole book up to the reader's page (retrieval, not the model looking), then the model
 /// answers in its words. Follow-ups carry on the same conversation, with only what's new.
 class Conversation {
-  Conversation({required this.book, required this.model});
+  Conversation({required this.book, required this.model, this.similar});
 
   final BookSoFar book;
   final CompanionModel model;
+
+  /// Passages close in meaning to a question, best first, with how close (cosine): found by
+  /// the text embedder when it's ready (see `semantic.dart`), joined with the keyword search.
+  final Future<List<(Chunk, double)>> Function(String query)? similar;
+
+  /// How close in meaning a passage must be for the book to count as saying something about a
+  /// question whose words it doesn't share.
+  static const closeEnough = 0.45;
   final turns = <Turn>[];
 
   /// Passages the model has already been given in this conversation.
@@ -255,8 +264,9 @@ class Conversation {
   /// Questions already suggested or asked, so none comes twice.
   final _suggested = <String>{};
 
-  /// The passages for [ask], most telling first, within [budget] characters.
-  List<Chunk> passagesFor(Ask ask, int budget) {
+  /// The passages for [ask], most telling first, within [budget] characters; for a question,
+  /// the keyword search's joined with [similar] (by meaning), when there are any.
+  List<Chunk> passagesFor(Ask ask, int budget, {List<Chunk> similar = const []}) {
     final List<Chunk> ranked;
     switch (ask.kind) {
       case AskKind.recap:
@@ -270,7 +280,8 @@ class Conversation {
           ...book.index.search(ask.name!, limit: 6),
         ];
       case AskKind.free:
-        ranked = book.index.search(_query(ask), limit: 10);
+        final words = book.index.search(_query(ask), limit: 10);
+        ranked = similar.isEmpty ? words : fuseRankings(words, similar, limit: 10);
     }
     final kept = <Chunk>[];
     final seen = <String>{};
@@ -303,13 +314,25 @@ class Conversation {
     turns.add(turn);
     _suggested.add(_key(ask.text));
     final fresh = !_started || !model.remembers;
-    var passages = passagesFor(ask, fresh ? model.freshChars : model.followUpChars);
+    var close = const <(Chunk, double)>[];
+    if (ask.kind == AskKind.free && similar != null) {
+      try {
+        close = await similar!(_query(ask));
+      } catch (_) {
+        // The keyword search alone.
+      }
+    }
+    final byMeaning = [for (final (c, _) in close) c];
+    var passages = passagesFor(ask, fresh ? model.freshChars : model.followUpChars, similar: byMeaning);
     turn.passages = [...passages]..sort(readingOrder);
     final unanswerable = switch (ask.kind) {
       AskKind.who when passages.isEmpty => '“${ask.name}” doesn’t come up in the book up to here.',
       AskKind.recap when passages.isEmpty => 'There’s not enough read yet for a recap.',
       // Nothing in the book so far to answer from: said, rather than made up.
-      AskKind.free when passages.isEmpty || !book.index.knows(ask.text) => 'The book so far doesn’t say.',
+      AskKind.free
+          when passages.isEmpty ||
+              !(book.index.knows(ask.text) || (close.isNotEmpty && close.first.$2 >= closeEnough)) =>
+        'The book so far doesn’t say.',
       _ => null,
     };
     if (unanswerable != null) {
@@ -329,7 +352,7 @@ class Conversation {
       } on ConversationFull {
         // No room left to carry on: start over, with the conversation so far in brief.
         _given.clear();
-        passages = passagesFor(ask, model.freshChars);
+        passages = passagesFor(ask, model.freshChars, similar: byMeaning);
         await for (final text in model.write(prompt(ask, passages, fresh: true), fresh: true, maxTokens: ask.maxTokens)) {
           turn.answer = _clean(text);
           yield turn;

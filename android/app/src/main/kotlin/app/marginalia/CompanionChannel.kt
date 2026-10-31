@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import com.google.mediapipe.tasks.genai.llminference.PromptTemplates
+import com.google.mediapipe.tasks.text.textembedder.TextEmbedder
 import com.google.mlkit.genai.common.DownloadStatus
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
@@ -35,6 +36,8 @@ import kotlinx.coroutines.withContext
  * - `gemmaOnce {path, prompt, maxTokens}` → Gemma's answer, outside the conversation (it's left as it was)
  *   (`contextTokens`, both: the model's window, 2048 if not given)
  * - `memoryBytes` → the phone's memory, for which Gemma it can run
+ * - `embed {path, texts}` → a vector for each text (Float32List), from the text embedder at
+ *   [path] (MediaPipe's Universal Sentence Encoder), for finding passages by meaning
  * - `gemmaJanky` the screen stuttered while Gemma wrote: if that was on the GPU, the CPU next time
  * - `gemmaCancel` stops the answer being written (a newer question, or the sheet closed)
  * - `gemmaClose` → lets go of Gemma (before its file is removed)
@@ -114,6 +117,18 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
                     }
                 }
             }
+            "embed" -> {
+                val path = call.argument<String>("path") ?: return result.error("bad_args", "path", null)
+                val texts = call.argument<List<String>>("texts") ?: emptyList()
+                scope.launch {
+                    try {
+                        result.success(embed(path, texts))
+                    } catch (e: Throwable) {
+                        android.util.Log.w("Companion", "Embedding failed: ${e.message}")
+                        result.error("embed_failed", e.message ?: e.javaClass.simpleName, null)
+                    }
+                }
+            }
             "memoryBytes" -> {
                 val info = android.app.ActivityManager.MemoryInfo()
                 (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(info)
@@ -154,6 +169,22 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
     }
 
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** The text embedder: small (6 MB), loaded on first use and kept. */
+    private var embedder: TextEmbedder? = null
+    private var embedderPath: String? = null
+    private val embedLock = Mutex()
+
+    private suspend fun embed(path: String, texts: List<String>): List<FloatArray> = embedLock.withLock {
+        withContext(Dispatchers.Default) {
+            val model = embedder?.takeIf { embedderPath == path } ?: TextEmbedder.createFromFile(context, java.io.File(path)).also {
+                runCatching { embedder?.close() }
+                embedder = it
+                embedderPath = path
+            }
+            texts.map { model.embed(it).embeddingResult().embeddings().first().floatEmbedding() }
+        }
+    }
 
     /** Loaded on first use (a few seconds) and kept: one question at a time. */
     private var gemma: LlmInference? = null
@@ -384,5 +415,7 @@ class CompanionChannel(messenger: BinaryMessenger, private val context: Context)
         channel.setMethodCallHandler(null)
         scope.cancel()
         closeGemma()
+        runCatching { embedder?.close() }
+        embedder = null
     }
 }

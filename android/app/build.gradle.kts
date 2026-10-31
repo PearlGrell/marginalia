@@ -74,6 +74,8 @@ dependencies {
     implementation("com.google.mlkit:genai-prompt:1.0.0-beta2")
     // ...and Gemma on phones without it, run with MediaPipe (the model is downloaded in the app).
     implementation("com.google.mediapipe:tasks-genai:0.10.35")
+    // ...and finding passages by meaning: a text embedder (its 6 MB model is downloaded too).
+    implementation("com.google.mediapipe:tasks-text:0.10.35")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     testImplementation("junit:junit:4.13.2")
