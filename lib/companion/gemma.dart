@@ -63,7 +63,15 @@ enum GemmaSize {
       'https://objectstorage.ap-mumbai-1.oraclecloud.com/p/2BFMlWV588O5fEfDDpVh2ZzPK5B4JWiFRLlPzZ9SfCbwnfNSyM82GplI4nbcu8_S'
       '/n/bmjtkz5nnabz/b/bucket-20260914-1251/o/';
 
-  String get url => '$_base$file';
+  /// Gemma 3n has a read link of its own (a pre-authenticated request for that object).
+  static const _largeUrl =
+      'https://objectstorage.ap-mumbai-1.oraclecloud.com/p/ayDIH0pPLfJFc_RgkEwx_pOw0Muk_Dgp_rNYaNL9AcTpTk6juBaXe409Jlay304X'
+      '/n/bmjtkz5nnabz/b/bucket-20260914-1251/o/gemma-3n-E2B-it-int4.task';
+
+  String get url => switch (this) {
+    GemmaSize.large => _largeUrl,
+    GemmaSize.small => '$_base$file',
+  };
 }
 
 class GemmaState {
