@@ -15,7 +15,7 @@ const _viewType = 'marginalia/readium-view';
 /// The view receives taps (so links work), long presses (text selection) and, in [scroll]
 /// mode, vertical drags. Horizontal drags are left to Flutter ancestors, which turn pages
 /// through the [ReadiumViewController]. Taps that don't follow a link come back as [onTap].
-class ReadiumView extends StatelessWidget {
+class ReadiumView extends StatefulWidget {
   const ReadiumView({
     super.key,
     required this.publicationId,
@@ -62,37 +62,122 @@ class ReadiumView extends StatelessWidget {
   final bool nativeGestures;
 
   @override
+  State<ReadiumView> createState() => _ReadiumViewState();
+}
+
+class _ReadiumViewState extends State<ReadiumView> {
+  /// Every touch goes straight to the page (text selected, or a PDF or comic).
+  bool _allToPage() => widget.selecting || widget.nativeGestures;
+
+  @override
   Widget build(BuildContext context) {
+    final w = widget;
     return AndroidView(
       viewType: _viewType,
       layoutDirection: TextDirection.ltr,
       creationParams: {
-        'publicationId': publicationId,
-        'locator': initialLocatorJson,
-        'preferences': preferences,
+        'publicationId': w.publicationId,
+        'locator': w.initialLocatorJson,
+        'preferences': w.preferences,
       },
       creationParamsCodec: const StandardMessageCodec(),
-      gestureRecognizers: selecting || nativeGestures
-          ? {Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new)}
-          : {
-              Factory<LongPressGestureRecognizer>(LongPressGestureRecognizer.new),
-              if (scroll) Factory<VerticalDragGestureRecognizer>(VerticalDragGestureRecognizer.new),
-            },
+      // The same recognizers whether or not text is selected: swapping them mid-touch (the
+      // selection starts during the long press) drops the rest of that touch, so the page never
+      // hears the finger lift. It then shows no selection handles, and takes every later touch
+      // for a second finger: nothing selects, turns or opens. They ask how to behave as each
+      // touch begins instead.
+      gestureRecognizers: {
+        Factory<_PageGestureRecognizer>(() => _PageGestureRecognizer(allToPage: _allToPage)),
+        if (w.scroll) Factory<VerticalDragGestureRecognizer>(VerticalDragGestureRecognizer.new),
+      },
       onPlatformViewCreated: (id) {
-        onCreated(
+        w.onCreated(
           ReadiumViewController._(
             id,
-            onLocationChanged,
-            onTap,
-            onSelection,
-            onHighlightTapped,
-            onSelectionActive,
-            onFootnote,
+            w.onLocationChanged,
+            w.onTap,
+            w.onSelection,
+            w.onHighlightTapped,
+            w.onSelectionActive,
+            w.onFootnote,
           ),
         );
       },
     );
   }
+}
+
+/// Claims a touch for the page: at once while [allToPage], otherwise once it's held still for
+/// a long press (to select text). A tap it lets go of still reaches the page (the platform
+/// view takes whatever no one else claims); a drag goes to the page turner.
+class _PageGestureRecognizer extends OneSequenceGestureRecognizer {
+  _PageGestureRecognizer({required this.allToPage});
+
+  final bool Function() allToPage;
+
+  int? _pointer;
+  Offset? _start;
+  Timer? _timer;
+  bool _accepted = false;
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    if (allToPage()) {
+      resolvePointer(event.pointer, GestureDisposition.accepted);
+      return;
+    }
+    // A second finger: the first one's long press decides.
+    if (_pointer != null) return;
+    _pointer = event.pointer;
+    _start = event.position;
+    _accepted = false;
+    _timer = Timer(kLongPressTimeout, () {
+      final pointer = _pointer;
+      if (pointer == null) return;
+      _accepted = true;
+      resolvePointer(pointer, GestureDisposition.accepted);
+    });
+  }
+
+  @override
+  void handleEvent(PointerEvent event) {
+    if (event.pointer == _pointer && !_accepted) {
+      final moved = event is PointerMoveEvent && (event.position - _start!).distance > kTouchSlop;
+      if (moved || event is PointerUpEvent || event is PointerCancelEvent) {
+        final pointer = event.pointer;
+        _reset();
+        resolvePointer(pointer, GestureDisposition.rejected);
+      }
+    }
+    stopTrackingIfPointerNoLongerDown(event);
+  }
+
+  @override
+  void rejectGesture(int pointer) {
+    if (pointer == _pointer) _reset();
+    super.rejectGesture(pointer);
+  }
+
+  @override
+  void didStopTrackingLastPointer(int pointer) => _reset();
+
+  void _reset() {
+    _timer?.cancel();
+    _timer = null;
+    _pointer = null;
+    _start = null;
+    _accepted = false;
+  }
+
+  @override
+  void dispose() {
+    _reset();
+    super.dispose();
+  }
+
+  @override
+  String get debugDescription => 'page';
 }
 
 /// Drives one [ReadiumView]. Navigation methods complete once the new page is laid out.
